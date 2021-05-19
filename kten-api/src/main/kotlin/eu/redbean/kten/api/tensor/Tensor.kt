@@ -1169,17 +1169,227 @@ abstract class Tensor(
 
     protected abstract fun concat(axis: Int, tensors: List<Tensor>): Tensor
 
+    /**
+     * Creates an identical copy of the tensor.
+     */
     abstract fun copy(): Tensor
 
+    /**
+     * Removes the specified axis from the tensor, the axis must refer to a singleton dimension (`shape[axis] == 1`).
+     *
+     * Example:
+     * ```
+     * var tensor = Tensor.arrange(4).reshape(2, 1, 2)
+     * tensor = tensor.squeeze(axis = 1)
+     * println("$tensor shape: ${tensor.shape}")
+     * ```
+     * Output:
+     * ```
+     * [[0.0, 1.0],
+     * [2.0, 3.0]] shape: [2, 2]
+     * ```
+     *
+     * @param axis specifies the axis to remove. The axis may be negative value, representing `<tensor dimensions> - |<axis value>|`.
+     * @throws IllegalArgumentException if the specified axis is not in the tensor, or if the the size at the specified axis isn't one.
+     */
     abstract fun squeeze(axis: Int): Tensor
 
+    /**
+     * Adds a singleton dimension (`resultTensor.shape[axis] == 1`) to the tensor at the specified axis.
+     *
+     * Example:
+     * ```
+     * var tensor = Tensor.arrange(4).reshape(2, 2)
+     * tensor = tensor.unsqueeze(1)
+     * println("$tensor shape: ${tensor.shape}")
+     * ```
+     * Output:
+     * ```
+     * [[[0.0, 1.0]],
+     * [[2.0, 3.0]]] shape: [2, 1, 2]
+     * ```
+     * @param axis specifies the axis to add. The axis may be negative value, representing `<tensor dimensions> - |<axis value>| + 1`.
+     * @throws IllegalArgumentException if the specified axis is out of bounds for `(<tensor dimensions> + 1) * -1` inclusive and
+     * `<tensor dimensions>` inclusive.
+     */
     abstract fun unsqueeze(axis: Int): Tensor
 
+    /**
+     * Gathers values from the tensor along the specified [axis], indexed by the [index] values.
+     * The index tensor must have the same shape as the tensor, for all axis, except the specified axis. The result will have the same
+     * shape as the index.
+     *
+     * Values from the [index] tensor are converted to integer with simple casting, and invalid index value handling (outside the bounds
+     * of the 0 to `shape[axis]` range) is backend implementation specific.
+     *
+     * Example:
+     * ```
+     * val tensor = Tensor.arrange(27).reshape(3, 3, 3)
+     * val index = tensorOf(
+     * 0, 1, 2,
+     * 2, 1, 0,
+     *
+     * 2, 0, 1,
+     * 1, 0, 2,
+     *
+     * 0, 2, 1,
+     * 1, 2, 0
+     * ).reshape(3, 2, 3)
+     *
+     * var res1 = Tensor.zerosLike(index)
+     *
+     * for (i in 0 until index.shape[0])
+     *     for (j in 0 until index.shape[1])
+     *         for (k in 0 until index.shape[2])
+     *             res1[i, j, k] = tensor[i, index[i, j, k].item().toInt(), k]
+     *
+     * val res2 = tensor.gather(axis = 1, index = index)
+     *
+     * println("res1:\n$res1")
+     * println("res2:\n$res2")
+     * ```
+     * Output:
+     * ```
+     * res1:
+     * [[[0.0, 4.0, 8.0],
+     * [6.0, 4.0, 2.0]],
+     * [[15.0, 10.0, 14.0],
+     * [12.0, 10.0, 17.0]],
+     * [[18.0, 25.0, 23.0],
+     * [21.0, 25.0, 20.0]]]
+     *
+     * res2:
+     * [[[0.0, 4.0, 8.0],
+     * [6.0, 4.0, 2.0]],
+     * [[15.0, 10.0, 14.0],
+     * [12.0, 10.0, 17.0]],
+     * [[18.0, 25.0, 23.0],
+     * [21.0, 25.0, 20.0]]]
+     * ```
+     * @param axis the tensor axis from, the values are gathered. The axis may be negative value, representing `<tensor dimensions> - |<axis value>|`.
+     * @param index the tensor containing the index values for the specified axis. Index values should be in the range of `0` inclusive
+     * and `tensor.shape[axis]` exclusive.
+     * @throws IllegalArgumentException if the specified axis is not in the tensor, the index tensor has invalid shape, or if the backend
+     * implementation can report invalid index values. (Reporting about the tensor data can hinder performance, so this is implementation specific.)
+     */
     abstract fun gather(axis: Int, index: Tensor): Tensor
 
+    /**
+     * Scatters the values from [source] along the specified [axis] to the indices specified in the [index] tensor, keeping other values from the
+     * original tensor. (This is basically the inverse operation of [gather].)
+     *
+     * All three tensors must have the same number of dimensions.
+     * The index must have `shape[a] <= source.shape[a]` for all axis `a`, and `shape[a] <= thisTensor.shape[a]` for all axis `a`, except for the
+     * specified axis.
+     * The result will have the same shape as this tensor.
+     *
+     * Values from the [index] tensor are converted to integer with simple casting, and invalid index value handling (outside the bounds
+     * of the 0 to `shape[axis]` range) is backend implementation specific.
+     *
+     * Example:
+     * ```
+     * val tensor = Tensor.arrange(27).reshape(3, 3, 3) + 1f
+     * val index = tensorOf(
+     * 0, 1, 2,
+     * 2, 1, 0,
+     *
+     * 2, 0, 1,
+     * 1, 0, 2,
+     *
+     * 0, 2, 1,
+     * 1, 2, 0
+     * ).reshape(3, 2, 3)
+     *
+     * val source = tensor * -1f
+     *
+     * var res1 = tensor.copy()
+     *
+     * for (i in 0 until index.shape[0])
+     *     for (j in 0 until index.shape[1])
+     *         for (k in 0 until index.shape[2])
+     *             res1[i, index[i, j, k].item().toInt(), k] = source[i, j, k]
+     *
+     * val res2 = tensor.scatter(axis = 1, index = index, source = source)
+     *
+     * println("res1:\n$res1")
+     * println("res2:\n$res2")
+     * ```
+     * Output:
+     * ```
+     * res1:
+     * [[[-1.0, 2.0, -6.0],
+     * [4.0, -5.0, 6.0],
+     * [-4.0, 8.0, -3.0]],
+     * [[10.0, -14.0, 12.0],
+     * [-13.0, 14.0, -12.0],
+     * [-10.0, 17.0, -15.0]],
+     * [[-19.0, 20.0, -24.0],
+     * [-22.0, 23.0, -21.0],
+     * [25.0, -23.0, 27.0]]]
+     *
+     * res2:
+     * [[[-1.0, 2.0, -6.0],
+     * [4.0, -5.0, 6.0],
+     * [-4.0, 8.0, -3.0]],
+     * [[10.0, -14.0, 12.0],
+     * [-13.0, 14.0, -12.0],
+     * [-10.0, 17.0, -15.0]],
+     * [[-19.0, 20.0, -24.0],
+     * [-22.0, 23.0, -21.0],
+     * [25.0, -23.0, 27.0]]]
+     * ```
+     * @param axis the tensor axis to, the values are scattered in the result. The axis may be negative value,
+     * representing `<tensor dimensions> - |<axis value>|`.
+     * @param index the tensor containing the index values for the specified axis. Index values should be in the range of `0` inclusive
+     * and `tensor.shape[axis]` exclusive.
+     * @param source the tensor containing the values that the operation will scatter to the result.
+     * @throws IllegalArgumentException if the specified axis is not in the tensor, the index, or source tensor has invalid shape, or if the
+     * backend implementation can report invalid index values. (Reporting about the tensor data can hinder performance, so this is
+     * implementation specific.)
+     */
     abstract fun scatter(axis: Int, index: Tensor, source: Tensor): Tensor
 
-
+    /**
+     * Performs the dot product / matrix multiplication operation on tensors, based on the tensors dimensionality.
+     *
+     * The operation, based on the tensors dimensions is the following:
+     * - If both tensors are 1D, it calculates the dot product, and returns a singleton tensor (tensor with a single value).
+     * - If this tensor (left hand side) is 2D and the input tensor (right hand side) is 1D, it performs a matrix-vector
+     * multiplication, and returns a vector (1D tensor).
+     * - If this tensor is 1D and the input tensor is 2D, it prepends a singleton dimension to this tensor (`unsqueeze(axis = 0)`),
+     * performs a matrix multiplication, after the operation, the extra dimension is removed. Returning a vector.
+     * - If both tensors are 2D, it performs a matrix multiplication, and returns a matrix.
+     * - If either or both tensors dimensions `>=` 3, it performs a batch matrix multiplication, by broadcasting the batch dimensions
+     * (preceding the last two dimensions). If this tensor is 1D, it simply broadcasted to the shape of the input tensor, if the input
+     * tensor is 1D, a singleton dimension is appended to it (`unsqueeze(axis = 1)`) and broadcasted to the shape of this tensor.
+     * If both tensors have more than two dimensions, the batch dimensions must follow the implicit broadcast rule.
+     *
+     * **Implicit broadcasting rule:** A tensor is implicitly broadcastable to another shape, if all non-singleton dimensions
+     * match in the tensor's shape and the desired shape, all missing dimensions are considered as singleton dimensions at the
+     * beginning of the tensor's shape.
+     *
+     * Example:
+     * ```
+     * val t1 = Tensor.arrange(8).reshape(2, 2, 2)
+     * val t2 = Tensor.arrange(12).reshape(2, 1, 2, 3)
+     *
+     * val res = t1 matmul t2
+     *
+     * println("$res shape: ${res.shape}")
+     * ```
+     * Output:
+     * ```
+     * [[[[3.0, 4.0, 5.0],
+     * [9.0, 14.0, 19.0]],
+     * [[15.0, 24.0, 33.0],
+     * [21.0, 34.0, 47.0]]],
+     * [[[9.0, 10.0, 11.0],
+     * [39.0, 44.0, 49.0]],
+     * [[69.0, 78.0, 87.0],
+     * [99.0, 112.0, 125.0]]]] shape: [2, 2, 2, 3]
+     * ```
+     * @throws IllegalArgumentException if the tensor shapes are incompatible.
+     */
     abstract infix fun matmul(tensor: Tensor): Tensor
 
     abstract fun gemm(addMatrix: Tensor, matrix: Tensor, alpha: Float = 1f, beta: Float = 1f): Tensor
@@ -1351,6 +1561,12 @@ abstract class Tensor(
         fun eye(size: Int): Tensor {
             return invoke(listOf(size, size)) {
                 if (it / size == it % size) 1.0f else 0.0f
+            }
+        }
+
+        fun eye(rows: Int, cols: Int): Tensor {
+            return invoke(listOf(rows, cols)) {
+                if (it / cols == it % cols) 1f else 0f
             }
         }
 

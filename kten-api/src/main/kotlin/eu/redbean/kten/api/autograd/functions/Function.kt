@@ -141,7 +141,7 @@ abstract class Function(
 
     override fun release() {
         if (keepOutput && hasValue())
-            ops.release(output!!)
+            releaseUnusedInGraph()
     }
 
     override fun incrementRef() {

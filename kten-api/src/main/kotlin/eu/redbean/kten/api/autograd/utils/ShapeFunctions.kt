@@ -60,7 +60,9 @@ fun List<Int>.squeeze(axis: Int): List<Int> {
 
 fun List<Int>.unsqueeze(axis: Int): List<Int> {
     val normAxis = if (axis != this.size)
-        if (axis < 0) this.normalizeAxis(axis) + 1 else this.normalizeAxis(axis)
+        if (axis < 0)
+            (if (axis == (this.size + 1) * -1) 0 else this.normalizeAxis(axis) + 1)
+        else this.normalizeAxis(axis)
     else axis
 
     val res = this.toMutableList()
@@ -265,19 +267,19 @@ fun List<Int>.normalizedIndexedShape(index: Array<out IntRange>): Pair<Array<Int
     )
 }
 
-fun List<Int>.tensorIndexing(index: IntArray): SimpleTensorIndexing {
-    //val normalizedIndex = normalizeIndex(index) //TODO check if normalization is needed or not in every case
-    return SimpleTensorIndexing(this, index)
+fun List<Int>.tensorIndexing(index: IntArray, normalize: Boolean = true): SimpleTensorIndexing {
+    val normalizedIndex = if (normalize) normalizeIndex(index) else index
+    return SimpleTensorIndexing(this, normalizedIndex)
 }
 
-fun List<Int>.tensorIndexing(index: List<Int>): SimpleTensorIndexing {
-    //val normalizedIndex = normalizeIndex(index)
-    return SimpleTensorIndexing(this, index)
+fun List<Int>.tensorIndexing(index: List<Int>, normalize: Boolean = true): SimpleTensorIndexing {
+    val normalizedIndex = if (normalize) normalizeIndex(index) else index
+    return SimpleTensorIndexing(this, normalizedIndex)
 }
 
-fun List<Int>.tensorIndexing(index: Array<out IntRange>): RangeTensorIndexing {
-    //val normalizedIndex = normalizeIndex(index)
-    return RangeTensorIndexing(this, index.toList())
+fun List<Int>.tensorIndexing(index: Array<out IntRange>, normalize: Boolean = true): RangeTensorIndexing {
+    val normalizedIndex = if (normalize) normalizeIndex(index) else index
+    return RangeTensorIndexing(this, normalizedIndex.toList())
 }
 
 fun List<Int>.toIndexRanges(): Array<IntRange> {
@@ -364,5 +366,16 @@ fun List<Int>.checkBlasShape(shape1: List<Int>, shape2: List<Int>) {
             throw IllegalArgumentException("Gemv got tensors with invalid shapes, addTensor: $this , tensor1: $shape1 , tensor2: $shape2")
     } else {
         throw IllegalArgumentException("Invalid shapes in BLAS operation, addTensor: $this , tensor1: $shape1 , tensor2: $shape2")
+    }
+}
+
+fun List<Int>.checkMatmulShapesCompatible(shape: List<Int>) {
+    if (this.size > 1 && shape.size == 1 && this[this.size - 1] != shape[0]) {
+        throw IllegalArgumentException("Cannot matrix multiply tensors with shape $this and $shape, shape sizes in the last dimension must match")
+    }
+    if (shape.size > 1 && this[this.size - 1] != shape[shape.size - 2]) {
+        throw IllegalArgumentException("Cannot matrix multiply tensors with shape $this and $shape, the first shape size in the last dimension " +
+                " must match the second shape size in the second to last dimension " +
+                "(first.shape[${this.size - 1}] != second.shape[${shape.size - 2}])")
     }
 }

@@ -36,6 +36,8 @@ class OCLTensorOperations(
 
     private var alreadyInGC = false
 
+    private var gcSurvivors = listOf<OCLRawTensor>()
+
     override fun create(shape: List<Int>, requiresGrad: Boolean, init: (Int) -> Float): Tensor {
         return tensorFromRaw(createRaw(shape, init), requiresGrad)
     }
@@ -71,15 +73,16 @@ class OCLTensorOperations(
 
     override fun garbageCollector(): TensorOperationsGarbageCollector {
         if (alreadyInGC) //overlapping case
-            return TensorOperationsGarbageCollector {  }
+            return OCLTensorGarbageCollector {  }
 
-        val instances = mutableListOf<OCLRawTensor>()
+        val instances = gcSurvivors.toMutableList()
         environment.instanceCollector = { instances.add(it) }
         alreadyInGC = true
-        return TensorOperationsGarbageCollector {
+        return OCLTensorGarbageCollector {
             environment.instanceCollector = {}
             alreadyInGC = false
             release(instances)
+            gcSurvivors = instances.filter { it.referenced() }
             instances.clear()
         }
     }

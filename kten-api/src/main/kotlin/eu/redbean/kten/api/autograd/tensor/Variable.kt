@@ -51,6 +51,10 @@ class Variable(
 
     override fun grad(): Tensor = NoGradVariable(ops, gradient)
 
+    fun inplaceMultiplyGrad(value: Float) {
+        gradient *= value
+    }
+
     override fun retainGrad(): Tensor {
         return this
     }

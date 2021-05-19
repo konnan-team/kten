@@ -30,6 +30,8 @@ class OCLRawTensor(
         refCount++
     }
 
+    internal fun referenced(): Boolean = refCount > 0
+
     internal fun release(): Boolean {
         if (!mustSurviveGC)
             refCount--

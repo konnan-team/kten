@@ -306,7 +306,7 @@ abstract class AGTensor(
         val t1 = inplaceSafe(this)
         val t2 = inplaceSafe(tensor)
 
-        //TODO check shape compatibility!!!
+        t1.shape.checkMatmulShapesCompatible(t2.shape)
 
         val dim1 = t1.dimensions
         val dim2 = t2.dimensions

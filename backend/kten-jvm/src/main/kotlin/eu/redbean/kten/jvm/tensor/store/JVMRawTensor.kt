@@ -66,7 +66,7 @@ class JVMRawTensor(
             for (i in 0 until indices.size) {
                 indices[i] %= thisShape[i]
             }
-            this.storeReference[thisShape.tensorIndexing(indices).storeIndex]
+            this.storeReference[thisShape.tensorIndexing(indices, false).storeIndex]
         }
 
         return JVMRawTensor(shape, elements, platformKey)

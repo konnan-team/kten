@@ -120,7 +120,7 @@ class IndexSetTensor(
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         val gradInput = gradient.copy()
         gradInput[index] = 0.0f
-        val gradValue = gradient[index].reshape(*valueShape.toIntArray())
+        val gradValue = gradient[index].reshape(valueShape)
         return listOf(gradInput, gradValue)
     }
 

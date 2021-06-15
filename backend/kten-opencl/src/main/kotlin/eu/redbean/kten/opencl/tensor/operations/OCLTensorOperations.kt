@@ -73,18 +73,26 @@ class OCLTensorOperations(
 
     override fun garbageCollector(): TensorOperationsGarbageCollector {
         if (alreadyInGC) //overlapping case
-            return OCLTensorGarbageCollector {  }
+            return TensorOperationsGarbageCollector {  }
 
         val instances = gcSurvivors.toMutableList()
         environment.instanceCollector = { instances.add(it) }
         alreadyInGC = true
-        return OCLTensorGarbageCollector {
+        return TensorOperationsGarbageCollector {
             environment.instanceCollector = {}
             alreadyInGC = false
             release(instances)
             gcSurvivors = instances.filter { it.referenced() }
             instances.clear()
         }
+    }
+
+    override fun markSurviveGC(rawTensor: AbstractRawTensor<Any>) {
+        (rawTensor as OCLRawTensor).mustSurviveGC = true
+    }
+
+    override fun markReleasableInGC(rawTensor: AbstractRawTensor<Any>) {
+        (rawTensor as OCLRawTensor).mustSurviveGC = false
     }
 
     override fun createRaw(shape: List<Int>, init: (Int) -> Float): OCLRawTensor {

@@ -28,6 +28,15 @@ interface TensorOperations<RAW_TYPE : AbstractRawTensor<*>>: BasicTensorOperatio
 
     fun incrementRef(rawTensor: RAW_TYPE)
 
+    @Suppress("UNCHECKED_CAST")
+    fun markSurviveGC(rawTensor: AbstractRawTensor<Any>) {
+        incrementRef(rawTensor as RAW_TYPE)
+    }
+
+    fun markReleasableInGC(rawTensor: AbstractRawTensor<Any>) {
+        release(rawTensor)
+    }
+
     fun pow(constant: Float, rawTensor: RAW_TYPE): RAW_TYPE
 
     fun concat(axis: Int, inputs: List<RAW_TYPE>): RAW_TYPE

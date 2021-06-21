@@ -4,6 +4,8 @@ import eu.redbean.kten.api.autograd.tensor.Variable
 import eu.redbean.kten.api.tensor.Tensor
 import eu.redbean.kten.api.tensor.operations.TensorOperations
 import eu.redbean.kten.api.tensor.operations.TensorOperationsGarbageCollector
+import eu.redbean.kten.api.tensor.platform.DeviceType
+import eu.redbean.kten.api.tensor.platform.PlatformInfo
 import eu.redbean.kten.api.tensor.platform.PlatformProvider
 import eu.redbean.kten.api.tensor.store.AbstractRawTensor
 import eu.redbean.kten.jvm.tensor.store.JVMRawTensor
@@ -19,8 +21,12 @@ object MemLeakDetectingJVMTensorOperations: AbstractJVMTensorOperations() {
 
     private var alreadyInGC = false
 
+    val platformInfo = PlatformInfo(
+        "JVM - Testing", DeviceType.JVM, Runtime.getRuntime().maxMemory(), platformKey
+    )
+
     init {
-        PlatformProvider.register(platformKey, this as TensorOperations<AbstractRawTensor<Any>>)
+        PlatformProvider.register(platformKey, this as TensorOperations<AbstractRawTensor<Any>>, platformInfo)
 
         PlatformProvider.registerPlatformTransformer(JVMTensorOperations.platformKey to this.platformKey) {
             JVMRawTensor(it.shape, it.storeReference as FloatArray, this.platformKey) as AbstractRawTensor<Any>

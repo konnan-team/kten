@@ -2,6 +2,7 @@ package eu.redbean.kten.tensor.opencl
 
 import eu.redbean.kten.api.tensor.operations.TensorOperations
 import eu.redbean.kten.api.tensor.operations.TensorOperationsGarbageCollector
+import eu.redbean.kten.api.tensor.platform.DeviceType
 import eu.redbean.kten.api.tensor.platform.PlatformProvider
 import eu.redbean.kten.api.tensor.store.AbstractRawTensor
 import eu.redbean.kten.tensor.tests.TensorTestsBase
@@ -15,13 +16,21 @@ class OpenCLTensorTests: TensorTestsBase() {
 
     private lateinit var gc: TensorOperationsGarbageCollector
 
-    private val platformKey = "OpenCL - 0 - Intel(R) Core(TM) i7-6820HQ CPU @ 2.70GHz"//"OpenCL - 2 - AMD Radeon Pro 455 Compute Engine"
+    private lateinit var platformKey: String
 
     @BeforeAll
     fun setupDefaultOps() {
+        println("All available platforms: \n" + PlatformProvider.getAvailablePlatforms().joinToString("\n"))
+        println()
+
+        val platformInfo = PlatformProvider.findPlatform { it.platformImplementationType == "OpenCL" && it.deviceType in listOf(DeviceType.CPU, DeviceType.GPU) }
+        println("Running tests on platform:\n$platformInfo")
+
+        platformKey = platformInfo.platformKey
         PlatformProvider.registerAsDefault(
             platformKey,
-            PlatformProvider.tensorOperations(platformKey) as TensorOperations<AbstractRawTensor<Any>>
+            PlatformProvider.tensorOperations(platformKey) as TensorOperations<AbstractRawTensor<Any>>,
+            platformInfo
         )
     }
 

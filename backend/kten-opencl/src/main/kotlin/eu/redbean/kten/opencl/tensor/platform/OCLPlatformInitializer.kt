@@ -9,10 +9,9 @@ import eu.redbean.kten.jvm.tensor.store.JVMRawTensor
 import eu.redbean.kten.opencl.tensor.operations.OCLTensorOperations
 import eu.redbean.kten.opencl.tensor.store.OCLRawTensor
 import java.lang.ref.Cleaner
-import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.Executors
 
-object OCLPlatformInitializer: PlatformInitializer {
+object OCLPlatformInitializer : PlatformInitializer {
 
     override val platformKeys: List<String>
 
@@ -23,12 +22,12 @@ object OCLPlatformInitializer: PlatformInitializer {
 
     init {
         val devices = OCLEnvironment.getDevices()
-        val tensorOps = devices.map { (deviceIndex, deviseName) ->
-            val platformKey = "OpenCL - $deviceIndex - $deviseName"
-            platformKey to OCLTensorOperations(platformKey) { OCLEnvironment(deviceIndex) }
+        val tensorOps = devices.map { (deviceIndex, platformInfo) ->
+            val platformKey = platformInfo.platformKey
+            Triple(platformKey, OCLTensorOperations(platformKey) { OCLEnvironment(deviceIndex) }, platformInfo)
         }
-        tensorOps.forEach { (platformKey, tensorOp) ->
-            PlatformProvider.register(platformKey, tensorOp as TensorOperations<AbstractRawTensor<Any>>)
+        tensorOps.forEach { (platformKey, tensorOp, platformInfo) ->
+            PlatformProvider.register(platformKey, tensorOp as TensorOperations<AbstractRawTensor<Any>>, platformInfo)
             PlatformProvider.registerPlatformTransformer(JVMTensorOperations.platformKey to platformKey) {
                 val jvmRawTensor = it as JVMRawTensor
                 val oclRawTensor = tensorOp.createRaw(jvmRawTensor.shape) { jvmRawTensor.storeReference[it] }

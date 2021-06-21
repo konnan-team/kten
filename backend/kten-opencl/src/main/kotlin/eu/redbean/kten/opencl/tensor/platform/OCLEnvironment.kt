@@ -1,5 +1,8 @@
 package eu.redbean.kten.opencl.tensor.platform
 
+import eu.redbean.kten.api.tensor.platform.DeviceType
+import eu.redbean.kten.api.tensor.platform.PlatformInfo
+import eu.redbean.kten.api.tensor.platform.PlatformProvider
 import eu.redbean.kten.opencl.tensor.store.OCLMemoryObject
 import eu.redbean.kten.opencl.tensor.store.OCLMemoryObject.SynchronizationLevel
 import eu.redbean.kten.opencl.tensor.store.OCLMemoryObject.SynchronizationLevel.OFF_DEVICE
@@ -10,7 +13,6 @@ import org.jocl.blast.CLBlast
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.math.max
 
 class OCLEnvironment(deviceIndex: Int) {
 
@@ -18,7 +20,7 @@ class OCLEnvironment(deviceIndex: Int) {
     val commandQueue: cl_command_queue = createCommandQueue(deviceIndex, context)
     val kernelStore: OCLKernelStore by lazy { OCLKernelStore(context, commandQueue) }
 
-    private val threadLocalInstanceCollector: ThreadLocal<(OCLRawTensor) -> Unit> = ThreadLocal.withInitial({{}})
+    private val threadLocalInstanceCollector: ThreadLocal<(OCLRawTensor) -> Unit> = ThreadLocal.withInitial({ {} })
 
     internal var instanceCollector: (OCLRawTensor) -> Unit
         get() = threadLocalInstanceCollector.get()
@@ -29,16 +31,17 @@ class OCLEnvironment(deviceIndex: Int) {
     private val estReusePoolMemUsage = AtomicLong(0L)
 
     init {
+        val maxMemory = oclPlatformInfos[deviceIndex]!!.availableMemory
+        val maxAllowedReuseSize = (maxMemory * PlatformProvider.memoryUsageScaleHint).toLong()
         Thread {
             while (true) {
-                if (estReusePoolMemUsage.get() > 250_000_000L) { //TODO parameterize from device memory
-                    //val longest = memObjectReusePool.reduceValuesToInt(10L, { it.size }, 0, ::max)
+                if (estReusePoolMemUsage.get() > maxAllowedReuseSize) {
                     memObjectReusePool.forEachValue(10L) {
                         if (it.size > 2)
                             OCLPlatformInitializer.releaseExecutor.execute {
                                 while (it.size > 2) {
                                     val memObject = it.poll()
-                                    estReusePoolMemUsage.addAndGet(-(memObject?.memSize?:0L))
+                                    estReusePoolMemUsage.addAndGet(-(memObject?.memSize ?: 0L))
                                     if (memObject?.isReusable() == true) // just to be safe
                                         memObject.release()
                                 }
@@ -84,8 +87,9 @@ class OCLEnvironment(deviceIndex: Int) {
     companion object {
         private val contextProperties = cl_context_properties()
         private lateinit var devices: Array<cl_device_id?>
+        private lateinit var oclPlatformInfos: Map<Int, PlatformInfo>
 
-        fun getDevices(): Map<Int, String> {
+        fun getDevices(): Map<Int, PlatformInfo> {
             CL.setExceptionsEnabled(true)
             CLBlast.setExceptionsEnabled(true)
 
@@ -106,15 +110,43 @@ class OCLEnvironment(deviceIndex: Int) {
             devices = Array<cl_device_id?>(numberOfDevices) { null }
             CL.clGetDeviceIDs(platform, CL.CL_DEVICE_TYPE_ALL, numberOfDevices, devices, null)
 
-            return devices.mapIndexed { index, clDeviceId -> index to getDeviceInfoString(clDeviceId!!) }.toMap()
+            oclPlatformInfos = devices.mapIndexed(::mapIndexToPlatformInfo).toMap()
+            return oclPlatformInfos
         }
 
-        private fun getDeviceInfoString(device: cl_device_id): String {
+        private fun mapIndexToPlatformInfo(index: Int, deviceId: cl_device_id?): Pair<Int, PlatformInfo> {
+            val device = deviceId!!
+
             val size = LongArray(1)
             CL.clGetDeviceInfo(device, CL.CL_DEVICE_NAME, 0, null, size)
             val buffer = ByteArray(size[0].toInt())
             CL.clGetDeviceInfo(device, CL.CL_DEVICE_NAME, buffer.size.toLong(), Pointer.to(buffer), null)
-            return String(buffer, 0, buffer.size - 1)
+            val deviceName = String(buffer, 0, buffer.size - 1)
+
+            val typeSize = LongArray(1)
+            CL.clGetDeviceInfo(device, CL.CL_DEVICE_TYPE, 0, null, typeSize)
+            val typeBuffer = LongArray(typeSize[0].toInt())
+            CL.clGetDeviceInfo(device, CL.CL_DEVICE_TYPE, typeBuffer.size.toLong(), Pointer.to(typeBuffer), null)
+            val deviceType = when (typeBuffer[0]) {
+                CL.CL_DEVICE_TYPE_CPU -> DeviceType.CPU
+                CL.CL_DEVICE_TYPE_GPU -> DeviceType.GPU
+                CL.CL_DEVICE_TYPE_ACCELERATOR -> DeviceType.OTHER //TODO maybe these should be added to the DeviceType?
+                CL.CL_DEVICE_TYPE_DEFAULT -> DeviceType.OTHER
+                CL.CL_DEVICE_TYPE_CUSTOM -> DeviceType.OTHER
+                else -> DeviceType.OTHER
+            }
+
+            val memSize = LongArray(1)
+            CL.clGetDeviceInfo(device, CL.CL_DEVICE_GLOBAL_MEM_SIZE, 0, null, memSize)
+            val memBuffer = LongArray(memSize[0].toInt())
+            CL.clGetDeviceInfo(device, CL.CL_DEVICE_GLOBAL_MEM_SIZE, memBuffer.size.toLong(), Pointer.to(memBuffer), null)
+            val maxMemory = memBuffer[0]
+
+            val platformInfo = PlatformInfo(
+                "OpenCL", deviceType, maxMemory, "OpenCL - $index - $deviceName"
+            )
+
+            return index to platformInfo
         }
 
         fun createContext(deviceIndex: Int): cl_context {

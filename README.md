@@ -96,7 +96,6 @@ KTen doesn't support inplace operations yet, such as `timesAssign`, `plusAssign`
 ### Tests
 
 There is a `kten-testing` module which is included in all backend modules with test scope, and can be run with any backend. Tests in this module use the high-level `Tensor` api to check regression issues. Platform specific tests are implemented in the backend modules. 
-(Currently the tests cannot run automatically, because of the OpenCL backend uses the device name in the platform selection, but this will be fixed soon.)
 
 # Contribution
 

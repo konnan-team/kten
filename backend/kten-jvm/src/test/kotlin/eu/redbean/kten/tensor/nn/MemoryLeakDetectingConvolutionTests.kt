@@ -17,7 +17,11 @@ class MemoryLeakDetectingConvolutionTests: ConvolutionTestsBase() {
 
     @BeforeAll
     fun setupDefaultOpsAndGC() {
-        PlatformProvider.registerAsDefault(MemLeakDetectingJVMTensorOperations.platformKey, MemLeakDetectingJVMTensorOperations as TensorOperations<AbstractRawTensor<Any>>)
+        PlatformProvider.registerAsDefault(
+            MemLeakDetectingJVMTensorOperations.platformKey,
+            MemLeakDetectingJVMTensorOperations as TensorOperations<AbstractRawTensor<Any>>,
+            MemLeakDetectingJVMTensorOperations.platformInfo
+        )
         gc = MemLeakDetectingJVMTensorOperations.garbageCollector()
     }
 

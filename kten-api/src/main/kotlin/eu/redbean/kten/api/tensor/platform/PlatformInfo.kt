@@ -4,7 +4,8 @@ data class PlatformInfo(
     val platformImplementationType: String,
     val deviceType: DeviceType,
     val availableMemory: Long,
-    val platformKey: String
+    val platformKey: String,
+    val platformSpecificInfo: PlatformSpecificDeviceInfo? = null
 ) {
 
     private val memoryRegex = "([0-9]+)\\s*(GB|GIGS|MB|MEGS|KB|KILOS)".toRegex()
@@ -14,6 +15,7 @@ data class PlatformInfo(
              |Device type: $deviceType
              |Available memory: ${availableMemory / 1024 / 1024} MB
              |Platform key: $platformKey
+             |Platform specific info: $platformSpecificInfo
         """.trimMargin()
     }
 

@@ -1,13 +1,12 @@
 package eu.redbean.kten.api.autograd.functions
 
-import eu.redbean.kten.api.autograd.tensor.AGTensor
 import eu.redbean.kten.api.tensor.Tensor
 import eu.redbean.kten.api.tensor.operations.TensorOperations
 import eu.redbean.kten.api.tensor.store.AbstractRawTensor
 
 abstract class AnyTensorFunction(
     ops: TensorOperations<AbstractRawTensor<Any>>
-): Function(ops) {
+) : Function(ops) {
 
     protected lateinit var inputTensors: List<Tensor>
 
@@ -16,6 +15,10 @@ abstract class AnyTensorFunction(
     }
 
     override fun internalForward() {
+        super.internalForward()
+        if (hasValue()) {
+            return
+        }
         val inputFunctions = inputTensors.filter { it is Function }.map { it as Function }
         inputFunctions.forEach(Function::internalForward)
 

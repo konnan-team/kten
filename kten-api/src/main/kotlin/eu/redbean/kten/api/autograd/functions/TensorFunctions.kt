@@ -120,7 +120,7 @@ class IndexSetTensor(
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         val gradInput = gradient.copy()
         gradInput[index] = 0.0f
-        val gradValue = gradient[index].reshape(valueShape)
+        val gradValue = gradient[index].view(valueShape)
         return listOf(gradInput, gradValue)
     }
 
@@ -198,7 +198,8 @@ class Transpose(
 }
 
 class Reshape( // aka. View
-    ops: TensorOperations<AbstractRawTensor<Any>>
+    ops: TensorOperations<AbstractRawTensor<Any>>,
+    private val viewMode: Boolean = false
 ) : UnaryTensorFunction(ops) {
 
     private lateinit var newShape: List<Int>
@@ -217,11 +218,15 @@ class Reshape( // aka. View
 
     override fun doForward(input: AbstractRawTensor<Any>) {
         oldShape = input.shape
-        output = input.reshape(newShape)
+        if (viewMode) {
+            output = input.view(newShape)
+        } else {
+            output = input.reshape(newShape)
+        }
     }
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
-        return listOf(gradient.reshape(oldShape))
+        return listOf(if (viewMode) gradient.view(oldShape) else gradient.reshape(oldShape))
     }
 }
 
@@ -257,10 +262,22 @@ class Expand( // explicit broadcast
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         var gradInput = gradient
 
-        for (i in 0 until unsqueezedDims)
+        var gradToRelease: AbstractRawTensor<Any>
+        for (i in 0 until unsqueezedDims) {
+            gradToRelease = gradInput
             gradInput = gradInput.sum(0)
+            if (i > 0) {
+                ops.release(gradToRelease)
+            }
+        }
 
-        expandedDims.forEach { gradInput = gradInput.sum(it, true) }
+        for ((i, it) in expandedDims.withIndex()) {
+            gradToRelease = gradInput
+            gradInput = gradInput.sum(it, true)
+            if (i > 0) {
+                ops.release(gradToRelease)
+            }
+        }
 
         return listOf(gradInput)
     }
@@ -294,7 +311,41 @@ class Permute(
     }
 }
 
-//TODO IndexAdd / IndexCopy / IndexFill / IndexSelect (scatter like functions, I'm not sure if we need them just yet)
+//TODO IndexAdd / IndexCopy / IndexFill (scatter like functions, I'm not sure if we need them just yet)
+
+class IndexSelect(
+    ops: TensorOperations<AbstractRawTensor<Any>>
+): UnaryTensorFunction(ops) {
+
+    private var axis: Int = 0
+    private lateinit var index: Tensor
+    private lateinit var originalTensorShape: List<Int>
+
+    operator fun invoke(tensor: Tensor, index: Tensor, axis: Int): IndexSelect {
+        if (index is AGTensor && index.requiresGrad)
+            throw IllegalArgumentException("Index select cannot differentiate the index. " +
+                    "The index tensor passed to index select should never require gradients.")
+        val (normAxis, outputShape) = tensor.shape.indexSelectNormAxisShape(axis, index.shape)
+        this.modifiesShape = true
+        invoke(tensor)
+        this.cachedShape = outputShape
+        this.originalTensorShape = tensor.shape
+        this.axis = normAxis
+        this.index = index
+        return this
+    }
+
+    override fun doForward(input: AbstractRawTensor<Any>) {
+        output = input.indexSelect(axis, index.getRawValue())
+    }
+
+    override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
+        val gradInput = ops.createRaw(originalTensorShape) { 0f }
+        gradInput.indexAdd(axis, index.getRawValue(), gradient)
+        return listOf(gradInput)
+    }
+
+}
 
 class Concat(
     ops: TensorOperations<AbstractRawTensor<Any>>
@@ -306,7 +357,7 @@ class Concat(
     operator fun invoke(axis: Int, inputTensors: List<Tensor>): Concat {
         this.cachedShape = concatShapes(inputTensors.map { it.shape }, axis)
         this.inputTensors = inputTensors
-        this.axis = axis
+        this.axis = cachedShape!!.normalizeAxis(axis)
         return this
     }
 

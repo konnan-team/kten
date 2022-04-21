@@ -32,6 +32,10 @@ abstract class AbstractConvND(
     }
 
     override fun internalForward() {
+        super.internalForward()
+        if (hasValue()) {
+            return
+        }
         val inputFunctions = listOf(input, weight, bias).filter { it is Function }.map { it as Function }
         inputFunctions.forEach(Function::internalForward)
 

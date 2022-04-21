@@ -14,7 +14,11 @@ class GradientAggregatorFunction(
     private var calculation: (Tensor) -> Tensor = { it }
     private var result: Tensor? = null
 
-    operator fun invoke(tensor: Tensor, calculation: (Tensor) -> Tensor): GradientAggregatorFunction {
+    operator fun invoke(tensor: Tensor, calculation: (Tensor) -> Tensor, shape: List<Int>? = null): GradientAggregatorFunction {
+        if (shape != null) {
+            modifiesShape = true
+            cachedShape = shape
+        }
         super.invoke(tensor)
         this.calculation = calculation
         return this

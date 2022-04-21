@@ -9,14 +9,11 @@ import eu.redbean.kten.api.autograd.utils.toStoreSize
 import eu.redbean.kten.api.tensor.Tensor
 import eu.redbean.kten.api.tensor.operations.TensorOperations
 import eu.redbean.kten.api.tensor.operations.TensorOperationsGarbageCollector
-import eu.redbean.kten.api.tensor.operations.nn.ConvolutionOperation
+import eu.redbean.kten.api.tensor.operations.nn.*
 import eu.redbean.kten.api.tensor.serialization.CommonSerializableTensorDescriptor
 import eu.redbean.kten.api.tensor.serialization.SerializableTensorData
 import eu.redbean.kten.api.tensor.store.AbstractRawTensor
-import eu.redbean.kten.opencl.tensor.operations.nn.OCLSpatialConvolution
-import eu.redbean.kten.opencl.tensor.operations.nn.OCLSpatialConvolutionTranspose
-import eu.redbean.kten.opencl.tensor.operations.nn.OCLVolumetricConvolution
-import eu.redbean.kten.opencl.tensor.operations.nn.OCLVolumetricConvolutionTranspose
+import eu.redbean.kten.opencl.tensor.operations.nn.*
 import eu.redbean.kten.opencl.tensor.platform.OCLEnvironment
 import eu.redbean.kten.opencl.tensor.platform.kernels.OCLKernelConstant
 import eu.redbean.kten.opencl.tensor.store.OCLMemoryObject.MemoryAccessOption.SOURCE
@@ -113,7 +110,7 @@ class OCLTensorOperations(
         release(rawTensors.map { it as OCLRawTensor })
     }
 
-    private fun release(rawTensors: Iterable<OCLRawTensor>) {
+    internal fun release(rawTensors: Iterable<OCLRawTensor>) {
         rawTensors.forEach { it.release() }
     }
 
@@ -298,6 +295,33 @@ class OCLTensorOperations(
         )
     }
 
+    override fun spatialPooling(
+        kernel: List<Int>,
+        padding: List<Int>,
+        stride: List<Int>,
+        dilation: List<Int>,
+        options: PoolingOptions
+    ): PoolingOperation<OCLRawTensor> {
+        return when (options.type) {
+            PoolingType.MAX -> OCLSpatialMaxPooling(
+                kernel[0], kernel[1],
+                padding[0], padding[1],
+                stride[0], stride[1],
+                dilation[0], dilation[1],
+                options.useCeil,
+                this
+            )
+            PoolingType.AVG -> OCLSpatialAvgPooling(
+                kernel[0], kernel[1],
+                padding[0], padding[1],
+                stride[0], stride[1],
+                options.useCeil,
+                options.includePadding,
+                this
+            )
+        }
+    }
+
     override fun volumetricConvolution(kernel: List<Int>, padding: List<Int>, stride: List<Int>, dilation: List<Int>): ConvolutionOperation<OCLRawTensor> {
         return OCLVolumetricConvolution(
             kernel[0], kernel[1], kernel[2],
@@ -323,6 +347,16 @@ class OCLTensorOperations(
             outputPadding[0], outputPadding[1], outputPadding[2],
             this
         )
+    }
+
+    override fun batchNorm(axis: Int, momentum: Float, epsilon: Float, training: Boolean): BatchNormOperation<OCLRawTensor> {
+        return OCLBatchNorm(axis, momentum, epsilon, training, this)
+    }
+
+    override fun upsample(upsampleType: UpsampleType, scale: Int): Upsample2DOperation<OCLRawTensor> {
+        return when (upsampleType) {
+            UpsampleType.NEAREST -> OCLUpsample2DNearest(scale, this)
+        }
     }
 
     override fun toSerializableData(rawTensor: OCLRawTensor): SerializableTensorData {

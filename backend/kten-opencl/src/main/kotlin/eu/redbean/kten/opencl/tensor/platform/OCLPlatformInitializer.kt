@@ -8,16 +8,13 @@ import eu.redbean.kten.jvm.tensor.operations.JVMTensorOperations
 import eu.redbean.kten.jvm.tensor.store.JVMRawTensor
 import eu.redbean.kten.opencl.tensor.operations.OCLTensorOperations
 import eu.redbean.kten.opencl.tensor.store.OCLRawTensor
-import java.lang.ref.Cleaner
 import java.util.concurrent.Executors
 
 object OCLPlatformInitializer : PlatformInitializer {
 
     override val platformKeys: List<String>
 
-    val cleaner = Cleaner.create()
-
-    val releaseExecutor = Executors.newFixedThreadPool(2)
+    val releaseExecutor = Executors.newWorkStealingPool()
 
 
     init {

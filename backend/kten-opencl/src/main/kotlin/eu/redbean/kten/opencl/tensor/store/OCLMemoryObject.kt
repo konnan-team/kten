@@ -1,15 +1,13 @@
 package eu.redbean.kten.opencl.tensor.store
 
 import eu.redbean.kten.opencl.tensor.platform.OCLEnvironment
-import eu.redbean.kten.opencl.tensor.platform.OCLPlatformInitializer
-import eu.redbean.kten.opencl.tensor.store.OCLMemoryObject.SynchronizationLevel.*
 import eu.redbean.kten.opencl.tensor.store.OCLMemoryObject.MemoryAccessOption.*
+import eu.redbean.kten.opencl.tensor.store.OCLMemoryObject.SynchronizationLevel.*
 import org.jocl.CL
 import org.jocl.Pointer
 import org.jocl.Sizeof
 import org.jocl.blast.CLBlast
 import org.jocl.cl_mem
-import java.util.*
 
 class OCLMemoryObject {
 
@@ -28,7 +26,22 @@ class OCLMemoryObject {
     val memSize: Long
         get() = size.toLong() * Sizeof.cl_float
 
+    private var memObjectBacking: cl_mem? = null
+
     private val memObject: cl_mem
+        get() {
+            if (memObjectBacking == null) {
+                memObjectBacking = CL.clCreateBuffer(
+                    environment.context,
+                    CL.CL_MEM_READ_WRITE,
+                    Sizeof.cl_float * size.toLong(),
+                    null,
+                    null
+                )
+                environment.registerActiveMemObject(this)
+            }
+            return memObjectBacking!!
+        }
 
     var synchronization: SynchronizationLevel
 
@@ -53,14 +66,18 @@ class OCLMemoryObject {
             return pointerBacking!!
         }
 
+    val reusable get() = refCount <= 0
     private var released = false
-    private var reusable = false
+
+    private var refCount = 1
+
+    private var lastAccess = System.nanoTime()
 
 
     constructor(array: FloatArray, environment: OCLEnvironment, synchronization: SynchronizationLevel = OFF_DEVICE) {
         this.jvmArrayBacking = array
         this.size = array.size
-        this.memObject = CL.clCreateBuffer(
+        this.memObjectBacking = CL.clCreateBuffer(
             environment.context,
             CL.CL_MEM_READ_WRITE,
             Sizeof.cl_float * array.size.toLong(),
@@ -70,15 +87,12 @@ class OCLMemoryObject {
         this.pointerBacking = Pointer.to(array)
         this.environment = environment
         this.synchronization = synchronization
-//        OCLPlatformInitializer.cleaner.register(this) {
-//            if (!released)
-//                CL.clReleaseMemObject(memObject)
-//        }
+        environment.registerActiveMemObject(this)
     }
 
     constructor(size: Int, environment: OCLEnvironment, synchronization: SynchronizationLevel = ON_DEVICE) {
         this.size = size
-        this.memObject = CL.clCreateBuffer(
+        this.memObjectBacking = CL.clCreateBuffer(
             environment.context,
             CL.CL_MEM_READ_WRITE,
             Sizeof.cl_float * size.toLong(),
@@ -87,41 +101,69 @@ class OCLMemoryObject {
         )
         this.environment = environment
         this.synchronization = synchronization
-//        OCLPlatformInitializer.cleaner.register(this) {
-//            if (!released)
-//                CL.clReleaseMemObject(memObject)
-//        }
+        environment.registerActiveMemObject(this)
+    }
+
+    fun incrementRef() {
+        if (released || reusable) {
+            throw IllegalStateException("Store reference is already marked for reuse or release.")
+        }
+        refCount++
     }
 
     fun makeReusable() {
-        jvmArrayBacking = null
-        pointerBacking = null
-        synchronization = ON_DEVICE
-        reusable = true
+        refCount--
+        if (refCount < 0) {
+            throw IllegalStateException("Ref count is less than 0")
+        }
+        if (reusable) {
+            jvmArrayBacking = null
+            pointerBacking = null
+            synchronization = ON_DEVICE
+        }
     }
 
     fun reuseWithJvmArray(array: FloatArray, synchronization: SynchronizationLevel) {
+        if (reusable.not()) {
+            throw IllegalStateException("Trying to reuse store reference, which is not reusable.")
+        }
+        refCount = 1
+        lastAccess = System.nanoTime()
         jvmArrayBacking = array
         pointerBacking = Pointer.to(array)
         this.synchronization = synchronization
-        reusable = false
     }
 
     fun reuseWithoutJvmBacking(synchronization: SynchronizationLevel) {
+        if (reusable.not()) {
+            throw IllegalStateException("Trying to reuse store reference, which is not reusable.")
+        }
+        refCount = 1
+        lastAccess = System.nanoTime()
         this.synchronization = synchronization
-        reusable = false
     }
 
     fun isReusable(): Boolean {
         return reusable && !released
     }
 
+    fun isReleased(): Boolean = released
+
     fun release() {
-        CL.clReleaseMemObject(memObject)
+        memObjectBacking?.let {
+            synchronized(it) {
+                if (!released) {
+                    CL.clReleaseMemObject(it)
+                    released = true
+                }
+            }
+        }
         released = true
+        environment.removeInactiveMemObject(this)
     }
 
     fun getMemoryObject(option: MemoryAccessOption): cl_mem {
+        lastAccess = System.nanoTime()
         if (option == TARGET) {
             synchronization = ON_DEVICE
             return memObject
@@ -159,6 +201,7 @@ class OCLMemoryObject {
     }
 
     fun writeToDevice() {
+        lastAccess = System.nanoTime()
         if (synchronization == ON_DEVICE || synchronization == BOTH) {
             return
         }
@@ -180,11 +223,12 @@ class OCLMemoryObject {
 
 
     fun copyOf(): OCLMemoryObject {
+        lastAccess = System.nanoTime()
         if (synchronization == OFF_DEVICE) {
-            return OCLMemoryObject(jvmArray.copyOf(), environment)
+            return environment.memoryObjectOf(jvmArray.copyOf())
         }
 
-        val res = OCLMemoryObject(size, environment)
+        val res = environment.memoryObject(size)
 
         CLBlast.CLBlastScopy(
             size.toLong(),
@@ -202,13 +246,14 @@ class OCLMemoryObject {
     }
 
     fun slice(range: IntRange): OCLMemoryObject {
+        lastAccess = System.nanoTime()
         if (synchronization == OFF_DEVICE) {
-            return OCLMemoryObject(jvmArray.sliceArray(range), environment)
+            return environment.memoryObjectOf(jvmArray.sliceArray(range))
         }
 
         val newSize = range.last - range.first + 1
 
-        val res = OCLMemoryObject(newSize, environment)
+        val res = environment.memoryObject(newSize)
 
         CLBlast.CLBlastScopy(
             newSize.toLong(),
@@ -226,14 +271,15 @@ class OCLMemoryObject {
     }
 
     fun sparseSlices(ranges: List<IntRange>): OCLMemoryObject {
+        lastAccess = System.nanoTime()
         if (synchronization == OFF_DEVICE) {
-            return OCLMemoryObject(ranges.map { jvmArray.sliceArray(it) }.reduce(FloatArray::plus), environment)
+            return environment.memoryObjectOf(ranges.map { jvmArray.sliceArray(it) }.reduce(FloatArray::plus))
         }
 
         val sizes = ranges.map { it.last - it.first + 1 }
         val newSize = sizes.sum()
 
-        val res = OCLMemoryObject(newSize, environment)
+        val res = environment.memoryObject(newSize)
 
         var targetOffset = 0L
         for (i in ranges.indices) {
@@ -255,6 +301,7 @@ class OCLMemoryObject {
     }
 
     fun copyIntoAt(index: Int, other: OCLMemoryObject) {
+        lastAccess = System.nanoTime()
         CLBlast.CLBlastScopy(
             other.size.toLong(),
             other.getMemoryObject(SOURCE),
@@ -269,6 +316,7 @@ class OCLMemoryObject {
     }
 
     fun copyIntoSparseRanges(ranges: List<IntRange>, other: OCLMemoryObject) {
+        System.nanoTime()
         val sizes = ranges.map { it.last - it.first + 1 }
         var sourceStart = 0L
         for (i in ranges.indices) {
@@ -294,24 +342,17 @@ class OCLMemoryObject {
         if (this.size != other.size)
             return false
 
-        this.readToArray()
-        other.readToArray()
-
-        return this.jvmArray.contentEquals(other.jvmArray)
-    }
-
-    override fun hashCode(): Int {
-        if (synchronization == OFF_DEVICE)
-            return Objects.hash(environment, size, jvmArray)
-        return Objects.hash(environment, size, memObject)
+        return this.hashCode() == other.hashCode()
     }
 
     operator fun get(index: Int): Float {
+        lastAccess = System.nanoTime()
         readToArray()
         return jvmArray[index]
     }
 
     operator fun set(index: Int, value: Float) {
+        lastAccess = System.nanoTime()
         if (synchronization == OFF_DEVICE || synchronization == BOTH)
             jvmArray[index] = value
 
@@ -325,6 +366,7 @@ class OCLMemoryObject {
     }
 
     fun fill(value: Float) {
+        lastAccess = System.nanoTime()
         if (synchronization == OFF_DEVICE || synchronization == BOTH)
             jvmArray.fill(value)
 
@@ -338,6 +380,7 @@ class OCLMemoryObject {
     }
 
     fun fill(value: Float, range: IntRange) {
+        lastAccess = System.nanoTime()
         if (synchronization == OFF_DEVICE || synchronization == BOTH)
             jvmArray.fill(value, range.first, range.last + 1)
 
@@ -351,8 +394,30 @@ class OCLMemoryObject {
     }
 
     fun containsNan(): Boolean {
+        lastAccess = System.nanoTime()
         if (synchronization == OFF_DEVICE)
             return jvmArray.any { it.isNaN() }
         return environment.kernelStore.containsNaN(this)
     }
+
+    fun manageUnusedDeviceMemory(immediatelly: Boolean = false): Boolean {
+        val now = System.nanoTime()
+        if (immediatelly || lastAccess < now - 5_000_000_000L) {
+            if (!isReleased()) {
+                if (!isReusable()) {
+                    readToArray()
+                }
+                memObjectBacking?.let {
+                    synchronized(it) {
+                        CL.clReleaseMemObject(it)
+                    }
+                }
+                memObjectBacking = null
+                synchronization = OFF_DEVICE
+            }
+            return true
+        }
+        return false
+    }
+
 }

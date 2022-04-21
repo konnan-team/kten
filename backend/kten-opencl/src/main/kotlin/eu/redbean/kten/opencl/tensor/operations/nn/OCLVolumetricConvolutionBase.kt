@@ -11,7 +11,7 @@ abstract class OCLVolumetricConvolutionBase(
     protected val strideDepth: Int, protected val strideHeight: Int, protected val strideWidth: Int,
     protected val dilationDepth: Int, protected val dilationHeight: Int, protected val dilationWidth: Int,
     protected val ops: OCLTensorOperations
-): ConvolutionOperation<OCLRawTensor>() {
+): ConvolutionOperation<OCLRawTensor> {
 
     protected var inputPlane = -1
     protected var inputDepth = -1

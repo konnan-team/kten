@@ -3,7 +3,6 @@ package eu.redbean.kten.api.autograd.functions
 import eu.redbean.kten.api.autograd.tensor.AGTensor
 import eu.redbean.kten.api.tensor.Tensor
 import eu.redbean.kten.api.tensor.operations.TensorOperations
-import eu.redbean.kten.api.tensor.serialization.CommonSerializableTensorDescriptor
 import eu.redbean.kten.api.tensor.store.AbstractRawTensor
 
 abstract class Function(
@@ -37,6 +36,12 @@ abstract class Function(
             return cachedShape!!
         }
 
+    private val registeredAsInputIn = mutableListOf<Function>()
+
+    private var gradCache: AbstractRawTensor<Any>? = null
+
+    private var backwardRan: Boolean = false
+
     internal fun hasValue(): Boolean = output != null
 
     override fun forward() {
@@ -50,6 +55,8 @@ abstract class Function(
         if (shape.size != 1 || shape[0] != 1)
             throw IllegalStateException("Backward is only allowed on singleton calculation results (tensors with shape [1])")
 
+        registerInputUsages(getInputsAsList())
+
         ops.garbageCollector().use {
             if (hasValue().not())
                 internalForward()
@@ -57,12 +64,17 @@ abstract class Function(
             backwardWithGrad(ops.createRaw(listOf(1)) { 1f })
             releaseUnusedInGraph()
         }
+
     }
 
     override fun backward(gradients: Tensor) {
         if (shape != gradients.shape)
-            throw IllegalArgumentException("Backward with gradients require same shape for gradients as the calculation result shape. " +
-                    "Result shape: $shape provided gradients shape: ${gradients.shape}")
+            throw IllegalArgumentException(
+                "Backward with gradients require same shape for gradients as the calculation result shape. " +
+                        "Result shape: $shape provided gradients shape: ${gradients.shape}"
+            )
+
+        registerInputUsages(getInputsAsList())
 
         ops.garbageCollector().use {
             if (hasValue().not())
@@ -76,8 +88,45 @@ abstract class Function(
         }
     }
 
+    private fun registerInputUsages(inputs: List<Tensor>) {
+        inputs.filterIsInstance<Function>()
+            .forEach {
+                it.registeredAsInputIn.add(this)
+                it.registerInputUsages(it.getInputsAsList())
+            }
+    }
+
+    private fun clearInputUsages() {
+        getInputsAsList().filterIsInstance<Function>().forEach {
+            it.clearInputUsages()
+            it.registeredAsInputIn.clear()
+        }
+    }
+
+    private fun allOutputCalculationsBackPropagated() = registeredAsInputIn.all(Function::backwardRan)
+
     override fun backwardWithGrad(gradient: AbstractRawTensor<Any>) {
-        val gradients = doBackward(gradient)
+        if (registeredAsInputIn.size > 1) { //TODO check again because it is still buggy somehow (model layer grad aggr. gives different result and faster)
+            if (gradCache == null) {
+                gradCache = gradient //.copy()
+            } else {
+                gradCache!!.plusAssign(gradient)
+            }
+            //ops.release(gradient)
+
+            if (allOutputCalculationsBackPropagated().not())
+                return
+        }
+
+        val gradients: List<AbstractRawTensor<Any>?>
+        if (gradCache != null) {
+            gradients = doBackward(gradCache!!)
+        } else {
+            gradients = doBackward(gradient)
+            ops.release(gradient)
+        }
+
+        backwardRan = true
 
         gradients.forEach {
             if (it != null)
@@ -85,6 +134,9 @@ abstract class Function(
         }
 
         backwardToInputs(gradients)
+
+        if (gradCache != null)
+            ops.release(gradCache!!)
     }
 
     internal open fun releaseUnusedInGraph() {
@@ -107,7 +159,10 @@ abstract class Function(
         }
     }
 
-    internal abstract fun internalForward()
+    internal open fun internalForward() {
+        gradCache = null
+        backwardRan = false
+    }
 
     internal fun saveForBackward(vararg rawValues: AbstractRawTensor<Any>) {
         if (hasValue().not() || valuesSaved.isEmpty())
@@ -125,9 +180,11 @@ abstract class Function(
     }
 
     override fun grad(): Tensor {
-        throw IllegalStateException("Gradients are only available on variables (graph edges). " +
-                "Calculation results can be converted to variables with gradients by calling the retainGrad() method " +
-                "as part of the calculation graph, and after the backward() call using the asVariable(requiresGrad = true) method")
+        throw IllegalStateException(
+            "Gradients are only available on variables (graph edges). " +
+                    "Calculation results can be converted to variables with gradients by calling the retainGrad() method " +
+                    "as part of the calculation graph, and after the backward() call using the asVariable(requiresGrad = true) method"
+        )
     }
 
     protected fun nanCheck(tensor: AbstractRawTensor<Any>) {

@@ -32,6 +32,10 @@ abstract class AbstractBlasFunction(
     }
 
     override fun internalForward() {
+        super.internalForward()
+        if (hasValue()) {
+            return
+        }
         val inputFunctions = inputs.toList().filter { it is Function }.map { it as Function }
         inputFunctions.forEach(Function::internalForward)
 
@@ -48,7 +52,7 @@ abstract class AbstractBlasFunction(
     protected fun calculateAddTensorGrad(gradient: AbstractRawTensor<Any>): AbstractRawTensor<Any>? {
         var addTensorGrad: AbstractRawTensor<Any>? = null
         if (inputs.first is AGTensor && inputs.first.requiresGrad) {
-            addTensorGrad = mayUnexpand(gradient, addTensorShape)
+            addTensorGrad = mayUnexpand(gradient, addTensorShape, ops)
             if (beta != 1f)
                 addTensorGrad = addTensorGrad * beta
         }

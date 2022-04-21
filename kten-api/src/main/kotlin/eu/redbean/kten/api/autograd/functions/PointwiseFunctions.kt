@@ -4,9 +4,6 @@ import eu.redbean.kten.api.tensor.Tensor
 import eu.redbean.kten.api.tensor.operations.TensorOperations
 import eu.redbean.kten.api.tensor.store.AbstractRawTensor
 
-/**
- * @author Csubák Péter <peter.csubak@webvalto.hu>
- */
 
 class Exp(
     ops: TensorOperations<AbstractRawTensor<Any>>
@@ -56,11 +53,9 @@ class Tanh(
         gradTanh *= -1.0f
         gradTanh += 1.0f // mem optimized version of 1 - tanh(x)^2
 
-        val gradInput = gradient * gradTanh
+        gradTanh *= gradient
 
-        ops.release(gradTanh)
-
-        return listOf(gradInput)
+        return listOf(gradTanh)
     }
 }
 
@@ -76,13 +71,11 @@ class Sigmoid(
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         val (res) = valuesSaved
-        val oneMinusRes = -res
-        oneMinusRes += 1.0f
-        val gradSigmoid = oneMinusRes * res
 
-        val gradInput = gradient * gradSigmoid
-
-        ops.release(oneMinusRes, gradSigmoid)
+        val gradInput = -res
+        gradInput += 1.0f
+        gradInput *= res
+        gradInput *= gradient
 
         return listOf(gradInput)
     }
@@ -100,9 +93,8 @@ class Sinh(
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         val (input) = valuesSaved
         val gradSinh = input.cosh()
-        val gradInput = gradient * gradSinh
-        ops.release(gradSinh)
-        return listOf(gradInput)
+        gradSinh *= gradient
+        return listOf(gradSinh)
     }
 }
 
@@ -118,9 +110,8 @@ class Cosh(
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         val (input) = valuesSaved
         val gradCosh = input.sinh()
-        val gradInput = gradient * gradCosh
-        ops.release(gradCosh)
-        return listOf(gradInput)
+        gradCosh *= gradient
+        return listOf(gradCosh)
     }
 }
 
@@ -135,9 +126,8 @@ class Abs(
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         val (input) = valuesSaved
-        val signInput = input.sign()
-        val gradInput = gradient * signInput
-        ops.release(signInput)
+        val gradInput = input.sign()
+        gradInput *= gradient
         return listOf(gradInput)
     }
 }
@@ -157,14 +147,18 @@ class Clamp(
     }
 
     override fun doForward(input: AbstractRawTensor<Any>) {
-        val mask = (input gte min) * (input lte max) // TODO maybe this can be optimized
-        saveForBackward(mask)
+        saveForBackward(input)
         output = input.clamp(min, max)
     }
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
-        val (mask) = valuesSaved
-        return listOf(gradient * mask)
+        val (input) = valuesSaved
+        val mask = (input gte min)
+        val maxMask = input lte max
+        mask *= maxMask
+        val gradIn = gradient * mask
+        ops.release(mask, maxMask)
+        return listOf(gradIn)
     }
 }
 
@@ -179,10 +173,9 @@ class Sqrt(
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         val (input) = valuesSaved
-        val inputPowMinusHalf = input pow -0.5f
-        val gradInput = gradient * inputPowMinusHalf
+        val gradInput = input pow -0.5f
+        gradInput *= gradient
         gradInput /= 2.0f
-        ops.release(inputPowMinusHalf)
         return listOf(gradInput)
     }
 }
@@ -198,9 +191,8 @@ class Sin(
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         val (input) = valuesSaved
-        val gradSin = input.cos()
-        val gradInput = gradient * gradSin
-        ops.release(gradSin)
+        val gradInput = input.cos()
+        gradInput *= gradient
         return listOf(gradInput)
     }
 }
@@ -216,10 +208,9 @@ class Cos(
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         val (input) = valuesSaved
-        val gradCos = input.sin()
-        val gradInput = gradient * gradCos
+        val gradInput = input.sin()
+        gradInput *= gradient
         gradInput *= -1.0f
-        ops.release(gradCos)
         return listOf(gradInput)
     }
 }
@@ -322,7 +313,7 @@ abstract class ConstantGrad(
     }
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
-        return listOf(mayUnexpand(gradient * gradientValue, inputShape))
+        return listOf(mayUnexpand(gradient * gradientValue, inputShape, ops))
     }
 }
 

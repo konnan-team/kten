@@ -52,6 +52,8 @@ abstract class AbstractRawTensor<STORE_TYPE>(
 
     abstract operator fun times(other: AbstractRawTensor<STORE_TYPE>): AbstractRawTensor<STORE_TYPE>
 
+    abstract operator fun timesAssign(other: AbstractRawTensor<STORE_TYPE>)
+
     abstract operator fun times(constant: Float): AbstractRawTensor<STORE_TYPE>
 
     abstract operator fun timesAssign(constant: Float)
@@ -81,9 +83,11 @@ abstract class AbstractRawTensor<STORE_TYPE>(
         return res
     }
 
-    protected fun inplaceReshape(shape: List<Int>) {
+    fun inplaceReshape(shape: List<Int>) {
         this.shape = this.shape.reshape(shape)
     }
+
+    abstract fun view(shape: List<Int>): AbstractRawTensor<STORE_TYPE>
 
     private fun aggregatingOpOverAxis(
         axis: Int,
@@ -161,7 +165,7 @@ abstract class AbstractRawTensor<STORE_TYPE>(
 
     abstract fun getSingleValue(indexes: List<Int>): Float
 
-    abstract fun copy(): AbstractRawTensor<STORE_TYPE>
+    abstract fun copy(shallow: Boolean = false): AbstractRawTensor<STORE_TYPE>
 
     protected fun calculateCommonShapeWith(other: AbstractRawTensor<STORE_TYPE>): List<Int> {
         if (this.shape == other.shape) {
@@ -228,6 +232,10 @@ abstract class AbstractRawTensor<STORE_TYPE>(
     abstract fun narrow(axis: Int, start: Int, length: Int): AbstractRawTensor<STORE_TYPE>
 
     abstract fun dot(vector: AbstractRawTensor<STORE_TYPE>): AbstractRawTensor<STORE_TYPE>
+
+    abstract fun indexSelect(axis: Int, index: AbstractRawTensor<STORE_TYPE>): AbstractRawTensor<STORE_TYPE>
+
+    abstract fun indexAdd(axis: Int, index: AbstractRawTensor<STORE_TYPE>, src: AbstractRawTensor<STORE_TYPE>, alpha: Float = 1f)
 
     abstract fun containsNan(): Boolean
 

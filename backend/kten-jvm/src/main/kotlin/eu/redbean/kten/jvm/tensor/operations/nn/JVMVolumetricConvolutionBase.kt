@@ -13,7 +13,7 @@ abstract class JVMVolumetricConvolutionBase(
     protected val strideDepth: Int, protected val strideHeight: Int, protected val strideWidth: Int,
     protected val dilationDepth: Int, protected val dilationHeight: Int, protected val dilationWidth: Int,
     protected val ops: AbstractJVMTensorOperations
-): ConvolutionOperation<JVMRawTensor>() {
+): ConvolutionOperation<JVMRawTensor> {
 
     protected var inputPlane = -1
     protected var inputDepth = -1

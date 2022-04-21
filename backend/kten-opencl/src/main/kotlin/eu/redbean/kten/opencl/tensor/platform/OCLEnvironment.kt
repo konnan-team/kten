@@ -12,13 +12,20 @@ import org.jocl.*
 import org.jocl.blast.CLBlast
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class OCLEnvironment(deviceIndex: Int) {
 
     val context: cl_context = createContext(deviceIndex)
     val commandQueue: cl_command_queue = createCommandQueue(deviceIndex, context)
-    val kernelStore: OCLKernelStore by lazy { OCLKernelStore(context, commandQueue) }
+    val kernelStore: OCLKernelStore by lazy {
+        OCLKernelStore(
+            context,
+            commandQueue,
+            oclPlatformInfos[deviceIndex]!!.platformSpecificInfo as OCLPlatformSpecInfo
+        )
+    }
 
     private val threadLocalInstanceCollector: ThreadLocal<(OCLRawTensor) -> Unit> = ThreadLocal.withInitial({ {} })
 
@@ -30,31 +37,87 @@ class OCLEnvironment(deviceIndex: Int) {
 
     private val estReusePoolMemUsage = AtomicLong(0L)
 
+    private val activeMemObjects = ConcurrentLinkedQueue<OCLMemoryObject>()
+
+    private val estActiveMemUsage = AtomicLong(0L)
+
+    private val stopTheWorld = AtomicBoolean()
+
     init {
         val maxMemory = oclPlatformInfos[deviceIndex]!!.availableMemory
-        val maxAllowedReuseSize = (maxMemory * PlatformProvider.memoryUsageScaleHint).toLong()
-        Thread {
+        val maxAllowedEstimatedMemUsage = (maxMemory * PlatformProvider.memoryUsageScaleHint).toLong()
+        val cleanupThread = Thread {
             while (true) {
-                if (estReusePoolMemUsage.get() > maxAllowedReuseSize) {
+                if (estReusePoolMemUsage.get() > (maxAllowedEstimatedMemUsage * .75).toLong()) {
                     memObjectReusePool.forEachValue(10L) {
-                        if (it.size > 2)
-                            OCLPlatformInitializer.releaseExecutor.execute {
-                                while (it.size > 2) {
-                                    val memObject = it.poll()
-                                    estReusePoolMemUsage.addAndGet(-(memObject?.memSize ?: 0L))
-                                    if (memObject?.isReusable() == true) // just to be safe
-                                        memObject.release()
+                        if (it.size > 5)
+                            while (it.size > 5 && estReusePoolMemUsage.get() > (maxAllowedEstimatedMemUsage * .75).toLong()) {
+                                val memObject = it.poll()
+                                if (memObject?.isReusable() == true) { // just to be safe
+                                    estReusePoolMemUsage.addAndGet(-(memObject.memSize))
+                                    memObject.release()
                                 }
                             }
                     }
                 }
-                Thread.sleep(200)
+                if (estActiveMemUsage.get() > maxAllowedEstimatedMemUsage) {
+                    stopTheWorld.set(true)
+                    memObjectReusePool.forEachValue(10L) {
+                        while (it.size > 0) {
+                            val memObject = it.poll()
+                            if (memObject?.isReusable() == true) { // just to be safe
+                                estReusePoolMemUsage.addAndGet(-(memObject.memSize))
+                                memObject.release()
+                            }
+                        }
+                    }
+                    if (estActiveMemUsage.get() > maxAllowedEstimatedMemUsage) {
+                        activeMemObjects
+                            .filter { it.manageUnusedDeviceMemory() }
+                            .forEach {
+                                activeMemObjects.remove(it)
+                                estActiveMemUsage.addAndGet(-it.memSize)
+                            }
+                    }
+
+                    while (estActiveMemUsage.get() > maxMemory * 0.9) {
+                        val memObject = activeMemObjects.poll()
+                        memObject.manageUnusedDeviceMemory(true)
+                        estActiveMemUsage.addAndGet(-memObject.memSize)
+                    }
+                    stopTheWorld.set(false)
+                }
+
+                Thread.sleep(100)
             }
-        }.start()
+        }
+        cleanupThread.isDaemon = true
+        cleanupThread.start()
+    }
+
+    private fun getMemObjectFromPool(size: Int): OCLMemoryObject? {
+        while (stopTheWorld.get()) {
+            Thread.sleep(1)
+        }
+        var memoryObject: OCLMemoryObject?
+        do {
+            memoryObject = memObjectReusePool.get(size)?.poll()
+        } while (memoryObject != null && memoryObject.isReusable().not())
+        return memoryObject
+    }
+
+    fun registerActiveMemObject(memoryObject: OCLMemoryObject) {
+        activeMemObjects.offer(memoryObject)
+        estActiveMemUsage.addAndGet(memoryObject.memSize)
+    }
+
+    fun removeInactiveMemObject(memoryObject: OCLMemoryObject) {
+        activeMemObjects.remove(memoryObject)
+        estActiveMemUsage.addAndGet(-memoryObject.memSize)
     }
 
     fun memoryObjectOf(array: FloatArray, synchronization: SynchronizationLevel = OFF_DEVICE): OCLMemoryObject {
-        val memoryObjectFromPool = memObjectReusePool.get(array.size)?.poll()
+        val memoryObjectFromPool = getMemObjectFromPool(array.size)
         if (memoryObjectFromPool?.isReusable() == true) {
             memoryObjectFromPool.reuseWithJvmArray(array, synchronization)
             estReusePoolMemUsage.addAndGet(-memoryObjectFromPool.memSize)
@@ -65,7 +128,7 @@ class OCLEnvironment(deviceIndex: Int) {
     }
 
     fun memoryObject(size: Int, synchronization: SynchronizationLevel = ON_DEVICE): OCLMemoryObject {
-        val memoryObjectFromPool = memObjectReusePool.get(size)?.poll()
+        val memoryObjectFromPool = getMemObjectFromPool(size)
         if (memoryObjectFromPool?.isReusable() == true) {
             memoryObjectFromPool.reuseWithoutJvmBacking(synchronization)
             estReusePoolMemUsage.addAndGet(-memoryObjectFromPool.memSize)
@@ -76,12 +139,14 @@ class OCLEnvironment(deviceIndex: Int) {
     }
 
     fun mayReuseOrRelease(memoryObject: OCLMemoryObject) {
-        val reuseQueue = memObjectReusePool.computeIfAbsent(memoryObject.size) {
-            ConcurrentLinkedQueue<OCLMemoryObject>()
-        }
         memoryObject.makeReusable()
-        estReusePoolMemUsage.addAndGet(memoryObject.memSize)
-        reuseQueue.offer(memoryObject)
+        if (memoryObject.isReusable()) {
+            val reuseQueue = memObjectReusePool.computeIfAbsent(memoryObject.size) {
+                ConcurrentLinkedQueue<OCLMemoryObject>()
+            }
+            estReusePoolMemUsage.addAndGet(memoryObject.memSize)
+            reuseQueue.offer(memoryObject)
+        }
     }
 
     companion object {
@@ -142,8 +207,21 @@ class OCLEnvironment(deviceIndex: Int) {
             CL.clGetDeviceInfo(device, CL.CL_DEVICE_GLOBAL_MEM_SIZE, memBuffer.size.toLong(), Pointer.to(memBuffer), null)
             val maxMemory = memBuffer[0]
 
+            val maxWorkGroupSize = LongArray(1)
+            CL.clGetDeviceInfo(device, CL.CL_DEVICE_MAX_WORK_GROUP_SIZE, 0, null, maxWorkGroupSize)
+            val mwgSizeBuffer = LongArray(maxWorkGroupSize[0].toInt())
+            CL.clGetDeviceInfo(device, CL.CL_DEVICE_MAX_WORK_GROUP_SIZE, mwgSizeBuffer.size.toLong(), Pointer.to(mwgSizeBuffer), null)
+            val maxWorkGroup = mwgSizeBuffer[0]
+
+            val maxWorkItemSize = LongArray(1)
+            CL.clGetDeviceInfo(device, CL.CL_DEVICE_MAX_WORK_ITEM_SIZES, 0, null, maxWorkItemSize)
+            val mwiSizeBuffer = LongArray(maxWorkItemSize[0].toInt())
+            CL.clGetDeviceInfo(device, CL.CL_DEVICE_MAX_WORK_ITEM_SIZES, mwiSizeBuffer.size.toLong(), Pointer.to(mwiSizeBuffer), null)
+            val maxWorkItems = mwiSizeBuffer.toList()
+
             val platformInfo = PlatformInfo(
-                "OpenCL", deviceType, maxMemory, "OpenCL - $index - $deviceName"
+                "OpenCL", deviceType, maxMemory, "OpenCL - $index - $deviceName",
+                OCLPlatformSpecInfo(maxWorkGroup, maxWorkItems, device)
             )
 
             return index to platformInfo

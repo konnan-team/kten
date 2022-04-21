@@ -123,6 +123,8 @@ class JVMRawTensor(
 
     override fun times(other: AbstractRawTensor<FloatArray>): AbstractRawTensor<FloatArray> = elementwiseOpOnTensors(other, Float::times)
 
+    override fun timesAssign(other: AbstractRawTensor<FloatArray>) = inplaceElementwiseOpOnTensors(other, Float::times)
+
     override fun times(constant: Float): AbstractRawTensor<FloatArray> =mapElementsCopy { it * constant }
 
     override fun timesAssign(constant: Float) = inplaceMapElements { it * constant }
@@ -252,8 +254,17 @@ class JVMRawTensor(
         internalInplaceScatter(axis, index, src, addSameIndex = true)
     }
 
-    override fun copy(): AbstractRawTensor<FloatArray> {
+    override fun copy(shallow: Boolean): AbstractRawTensor<FloatArray> {
+        if (shallow) {
+            return JVMRawTensor(shape, storeReference, platformKey)
+        }
         return JVMRawTensor(this.shape, this.storeReference.copyOf(), platformKey)
+    }
+
+    override fun view(shape: List<Int>): AbstractRawTensor<FloatArray> {
+        val res = JVMRawTensor(this.shape.reshape(shape), this.storeReference, platformKey)
+        res.incrementRef()
+        return res
     }
 
     override fun get(index: IntArray): AbstractRawTensor<FloatArray> {
@@ -468,6 +479,42 @@ class JVMRawTensor(
             .reduce { a, b -> a + b }
 
         return JVMRawTensor(resShape, FloatArray(1) { resValue }, platformKey)
+    }
+
+    override fun indexSelect(axis: Int, index: AbstractRawTensor<FloatArray>): AbstractRawTensor<FloatArray> {
+        val (normAxis, resShape) = shape.indexSelectNormAxisShape(axis, index.shape)
+        val indexSize = index.shape[0]
+        val thisSize = this.shape[normAxis]
+
+        val res = JVMRawTensor(resShape, FloatArray(resShape.toStoreSize()), platformKey)
+
+        res.storeIndexing.applyAt(normAxis) { indexMapping ->
+            for (i in 0 until indexSize) {
+                val idx = index.storeReference[i].toInt()
+                if (idx < 0 || idx >= thisSize) {
+                    throw IllegalArgumentException("Index select got invalid index, index value $idx is out of bounds 0 and ${thisSize} at axis: $axis")
+                }
+                res.storeReference[indexMapping(i, res.storeIndexing)] = this.storeReference[indexMapping(idx, this.storeIndexing)]
+            }
+        }
+
+        return res
+    }
+
+    override fun indexAdd(axis: Int, index: AbstractRawTensor<FloatArray>, src: AbstractRawTensor<FloatArray>, alpha: Float) {
+        val normAxis = shape.indexAddCheckShapesNormAxis(axis, index.shape, src.shape)
+        val indexSize = index.shape[0]
+        val thisSize = shape[normAxis]
+
+        this.storeIndexing.applyAt(normAxis) { indexMapping ->
+            for (i in 0 until indexSize) {
+                val idx = index.storeReference[i].toInt()
+                if (idx < 0 || idx >= thisSize) {
+                    throw IllegalArgumentException("Index Add got invalid index, index value $idx is out of bounds 0 and ${thisSize} at axis: $axis")
+                }
+                this.storeReference[indexMapping(idx, this.storeIndexing)] += src.storeReference[indexMapping(i, src.storeIndexing)] * alpha
+            }
+        }
     }
 
     override fun containsNan(): Boolean {

@@ -13,7 +13,7 @@ class Plus(
     }
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>> {
-        return listOf(mayUnexpand(gradient, aShape), mayUnexpand(gradient, bShape)) 
+        return listOf(mayUnexpand(gradient.copy(shallow = true), aShape, ops), mayUnexpand(gradient.copy(shallow = true), bShape, ops))
     }
 }
 
@@ -26,7 +26,7 @@ class Minus(
     }
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>> {
-        return listOf(mayUnexpand(gradient, aShape), mayUnexpand(-gradient, bShape))
+        return listOf(mayUnexpand(gradient.copy(shallow = true), aShape, ops), mayUnexpand(-gradient, bShape, ops))
     }
 }
 
@@ -41,7 +41,7 @@ class Times(
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>> {
         val (a, b) = valuesSaved
-        return listOf(mayUnexpand(gradient * b, aShape), mayUnexpand(gradient * a, bShape))
+        return listOf(mayUnexpand(gradient * b, aShape, ops), mayUnexpand(gradient * a, bShape, ops))
     }
 }
 
@@ -57,9 +57,15 @@ class Div(
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>> {
         val (a, b) = valuesSaved
         val bRec = b.reciprocal()
+        val aGrad = gradient * bRec
+        val bGrad = -gradient
+        bGrad *= a
+        bGrad *= bRec
+        bGrad *= bRec
+        ops.release(bRec)
         return listOf(
-            mayUnexpand(gradient * bRec, aShape),
-            mayUnexpand(-gradient * a * bRec * bRec, bShape)
+            mayUnexpand(aGrad, aShape, ops),
+            mayUnexpand(bGrad, bShape, ops)
         )
     }
 }
@@ -75,9 +81,16 @@ class Pow(
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>> {
         val (a, b) = valuesSaved
+
+        val aGrad = gradient * b
+        aGrad *= (a pow (b - 1f))
+
+        val bGrad = gradient * (a pow b)
+        bGrad *= a.log()
+
         return listOf(
-            mayUnexpand(gradient * b * (a pow (b - 1.0f)), aShape),
-            mayUnexpand(gradient * (a pow b) * a.log(), bShape)
+            mayUnexpand(aGrad, aShape, ops),
+            mayUnexpand(bGrad, bShape, ops)
         )
     }
 }
@@ -91,7 +104,7 @@ class PlusConstant(
     }
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
-        return listOf(gradient)
+        return listOf(gradient.copy(shallow = true))
     }
 }
 
@@ -111,7 +124,7 @@ class MinusConstant(
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         return if (tensorFirst)
-            listOf(gradient)
+            listOf(gradient.copy(shallow = true))
         else
             listOf(-gradient)
     }
@@ -144,20 +157,14 @@ class DivConstant(
         }
     }
 
-    /**
-     * Note:
-     * Since we cannot perform tensor - tensor multiplication inplace because of the possible shape changes,
-     * so the calculation is broken up to enable us to manually release the references.
-     */
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         if (tensorFirst)
             return listOf(gradient / constant)
         else {
-            val inputRec = valuesSaved[0].reciprocal()
-            val inputRecSqr = inputRec * inputRec
-            val res = gradient * inputRecSqr
+            val res = valuesSaved[0].reciprocal()
+            res *= res
+            res *= gradient
             res *= -constant
-            ops.release(inputRec, inputRecSqr)
             return listOf(res)
         }
     }
@@ -182,10 +189,8 @@ class PowConstant(
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         if (tensorFirst) {
             val (input) = valuesSaved
-            val gradScaled = gradient * constant
-            val inputPowCMinusOne = input pow constant - 1f
-            val inputGrad = gradScaled * inputPowCMinusOne
-            ops.release(gradScaled, inputPowCMinusOne)
+            val inputGrad = gradient * constant
+            inputGrad *= input pow constant - 1f
             return listOf(inputGrad)
         } else {
             val (res) = valuesSaved

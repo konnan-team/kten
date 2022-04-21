@@ -92,7 +92,7 @@ fun concatShapes(shapes: List<List<Int>>, axis: Int): List<Int> {
             }.distinct().size == 1) {
             val newSizeAtAxis = shapes.map { it[normalizedAxis] }.sum()
             val res = shapes[0].toMutableList()
-            res[axis] = newSizeAtAxis
+            res[normalizedAxis] = newSizeAtAxis
             return res
         }
     }
@@ -267,6 +267,31 @@ fun List<Int>.normalizedIndexedShape(index: Array<out IntRange>): Pair<Array<Int
     )
 }
 
+fun List<Int>.indexSelectNormAxisShape(axis: Int, indexShape: List<Int>): Pair<Int, List<Int>> {
+    val normAxis = normalizeAxis(axis)
+    if (indexShape.size != 1) {
+        throw IllegalArgumentException("Index select requires singleton tensor as index, but got index tensor with shape: $indexShape")
+    }
+    val resShape = toMutableList()
+    resShape[normAxis] = indexShape[0]
+    return normAxis to resShape
+}
+
+fun List<Int>.indexAddCheckShapesNormAxis(axis: Int, indexShape: List<Int>, srcShape: List<Int>): Int {
+    if (indexShape.size != 1) {
+        throw IllegalArgumentException("Index add requires index tensor to have 1 dimension, but got tensor with shape: $indexShape")
+    }
+    val normAxis = normalizeAxis(axis)
+    val expectedSrcShape = toMutableList()
+    expectedSrcShape[normAxis] = indexShape[0]
+    if (srcShape != expectedSrcShape) {
+        throw IllegalArgumentException("Index add expects source tensor to have same size as index size at the specified axis, " +
+                "and same size as this tensor for every other axis, " +
+                "but got source tensor with shape: $srcShape axis: $axis and this tensor have shape: $this")
+    }
+    return normAxis
+}
+
 fun List<Int>.tensorIndexing(index: IntArray, normalize: Boolean = true): SimpleTensorIndexing {
     val normalizedIndex = if (normalize) normalizeIndex(index) else index
     return SimpleTensorIndexing(this, normalizedIndex)
@@ -379,3 +404,4 @@ fun List<Int>.checkMatmulShapesCompatible(shape: List<Int>) {
                 "(first.shape[${this.size - 1}] != second.shape[${shape.size - 2}])")
     }
 }
+

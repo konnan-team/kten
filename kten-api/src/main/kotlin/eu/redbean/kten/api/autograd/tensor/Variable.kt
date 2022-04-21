@@ -73,6 +73,14 @@ class Variable(
         value += tensor.getRawValue()
     }
 
+    fun inplaceSetValue(tensor: Tensor) {
+        if (this.shape != tensor.shape)
+            throw IllegalArgumentException("Invalid value shape")
+
+        ops.zeroOut(value)
+        value += tensor.getRawValue()
+    }
+
     override fun toPlatform(platform: String): Tensor {
         if (ops.platformKey == platform)
             return this

@@ -1,27 +1,29 @@
 package eu.redbean.kten.tensor.tests
 
+import eu.redbean.kten.api.autograd.functions.nn.batchNorm
+import eu.redbean.kten.api.autograd.functions.nn.upsample2d
 import eu.redbean.kten.api.autograd.tensor.AGTensor
 import eu.redbean.kten.api.autograd.tensor.Variable
 import eu.redbean.kten.api.tensor.*
 import eu.redbean.kten.api.tensor.Constants.all
+import eu.redbean.kten.api.tensor.Tensor.Companion.arrange
 import eu.redbean.kten.api.tensor.Tensor.Companion.concat
 import eu.redbean.kten.api.tensor.Tensor.Companion.mean
 import eu.redbean.kten.api.tensor.Tensor.Companion.randomTensor
 import eu.redbean.kten.api.tensor.Tensor.Companion.sqrt
 import eu.redbean.kten.api.tensor.Tensor.Companion.sum
 import eu.redbean.kten.api.tensor.Tensor.Companion.tensorOf
+import eu.redbean.kten.api.tensor.operations.nn.UpsampleType
 import eu.redbean.kten.api.tensor.serialization.serializers.tensorFromBinary
 import eu.redbean.kten.api.tensor.serialization.serializers.tensorFromJson
 import eu.redbean.kten.api.tensor.serialization.serializers.toBinary
 import eu.redbean.kten.api.tensor.serialization.serializers.toJson
-import org.junit.jupiter.api.*
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertAll
 
 abstract class TensorTestsBase {
-
-    //TODO move base tensor test to a super class in the api, which from all implementations can inherit the default tests,
-    // and add their own specific tests (and configure non default platform implementations)
 
     @Test
     fun should_calculate_addition() {
@@ -1240,10 +1242,10 @@ abstract class TensorTestsBase {
 
         assertTensorEquals(
             tensorOf(
-                1,  3,  5,
-                7,  9, 11,
+                1, 3, 5,
+                7, 9, 11,
 
-                2,  4,  6,
+                2, 4, 6,
                 8, 10, 12
             ).reshape(2, 2, 3),
             res
@@ -1398,7 +1400,7 @@ abstract class TensorTestsBase {
                 100, 49, 81, 64, 36,
                 1, 1, 1, 1, 1
             ).reshape(3, 5),
-            res
+            res, 1e-5f
         )
 
         res.sum().backward()
@@ -1418,6 +1420,50 @@ abstract class TensorTestsBase {
                 2, 2, 2, 2, 2
             ).reshape(3, 5),
             target.grad()
+        )
+    }
+
+    @Test
+    fun should_index_select_with_gradients() {
+        val tensor = arrange(27).reshape(3, 3, 3).asVariable(requiresGrad = true)
+        val index = tensorOf(0, 2, 0)
+
+        val res = tensor.indexSelect(1, index)
+
+        assertTensorEquals(
+            tensorOf(
+                0, 1, 2,
+                6, 7, 8,
+                0, 1, 2,
+
+                9, 10, 11,
+                15, 16, 17,
+                9, 10, 11,
+
+                18, 19, 20,
+                24, 25, 26,
+                18, 19, 20
+            ).reshape(3, 3, 3),
+            res
+        )
+
+        res.sum().backward()
+
+        assertTensorEquals(
+            tensorOf(
+                2, 2, 2,
+                0, 0, 0,
+                1, 1, 1,
+
+                2, 2, 2,
+                0, 0, 0,
+                1, 1, 1,
+
+                2, 2, 2,
+                0, 0, 0,
+                1, 1, 1
+            ).reshape(3, 3, 3),
+            tensor.grad()
         )
     }
 
@@ -1553,8 +1599,8 @@ abstract class TensorTestsBase {
 
         val x = (t1 matmul t2) + t3
 
-        var res = x.clamp(min=0f) + 0.2f * x.clamp(max=0f)
-        res = res matmul (res.transpose(0,1) / 1000f)
+        var res = x.clamp(min = 0f) + 0.2f * x.clamp(max = 0f)
+        res = res matmul (res.transpose(0, 1) / 1000f)
         res = sum(res + (res pow 2))
 
         assertTensorEquals(
@@ -1575,7 +1621,7 @@ abstract class TensorTestsBase {
         )
 
         assertTensorEquals(
-            tensorOf(-0.0875,  2.6097, -0.0875),
+            tensorOf(-0.0875, 2.6097, -0.0875),
             t3.grad(),
             1e-4f
         )
@@ -1729,7 +1775,7 @@ abstract class TensorTestsBase {
 
     @Test
     fun should_calculate_3d_tensor_vector_multiplication_with_grads() {
-        val t1 = Tensor.arrange(2*3*2).reshape(2, 3, 2).asVariable(requiresGrad = true)
+        val t1 = Tensor.arrange(2 * 3 * 2).reshape(2, 3, 2).asVariable(requiresGrad = true)
         val t2 = Tensor.arrange(2).asVariable(requiresGrad = true)
 
         val res = t1 matmul t2
@@ -1759,7 +1805,7 @@ abstract class TensorTestsBase {
 
     @Test
     fun should_calculate_vector_3d_tensor_multiplication_with_grads() {
-        val t1 = Tensor.arrange(2*3*2).reshape(2, 3, 2).asVariable(requiresGrad = true)
+        val t1 = Tensor.arrange(2 * 3 * 2).reshape(2, 3, 2).asVariable(requiresGrad = true)
         val t2 = Tensor.arrange(3).asVariable(requiresGrad = true)
 
         val res = t2 matmul t1
@@ -1826,7 +1872,7 @@ abstract class TensorTestsBase {
 
     @Test
     fun should_serialize_deserialize_tensor_to_binary() {
-        val t1 = randomTensor(2,3,4,5, requiresGrad = true)
+        val t1 = randomTensor(2, 3, 4, 5, requiresGrad = true)
         sum(t1 pow 2).backward() //to have gradient values
         val t1NoGrad = t1.noGrad()
 
@@ -1847,7 +1893,7 @@ abstract class TensorTestsBase {
 
     @Test
     fun should_serialize_deserialize_tensor_to_json() {
-        val t1 = randomTensor(2,3,4,5, requiresGrad = true)
+        val t1 = randomTensor(2, 3, 4, 5, requiresGrad = true)
         sum(t1 pow 2).backward() //to have gradient values
         val t1NoGrad = t1.noGrad()
 
@@ -1913,8 +1959,8 @@ abstract class TensorTestsBase {
 
     @Test
     fun should_calculate_gradients_with_gradient_aggregator() {
-        val t1 = (Tensor.arrange(4*3*5*6) * 0.2f).reshape(4, 3, 5, 6).asVariable(requiresGrad = true)
-        val t2 = (Tensor.arrange(4*3*5*6) * 0.1f).reshape(4, 3, 6, 5).asVariable(requiresGrad = true)
+        val t1 = (Tensor.arrange(4 * 3 * 5 * 6) * 0.2f).reshape(4, 3, 5, 6).asVariable(requiresGrad = true)
+        val t2 = (Tensor.arrange(4 * 3 * 5 * 6) * 0.1f).reshape(4, 3, 6, 5).asVariable(requiresGrad = true)
 
         var input = t1 matmul t2
         input *= t1.sum() + t2.mean()
@@ -1926,8 +1972,8 @@ abstract class TensorTestsBase {
 
         val res = calc.sum()
 
-        val t1True = (Tensor.arrange(4*3*5*6) * 0.2f).reshape(4, 3, 5, 6).asVariable(requiresGrad = true)
-        val t2True = (Tensor.arrange(4*3*5*6) * 0.1f).reshape(4, 3, 6, 5).asVariable(requiresGrad = true)
+        val t1True = (Tensor.arrange(4 * 3 * 5 * 6) * 0.2f).reshape(4, 3, 5, 6).asVariable(requiresGrad = true)
+        val t2True = (Tensor.arrange(4 * 3 * 5 * 6) * 0.1f).reshape(4, 3, 6, 5).asVariable(requiresGrad = true)
 
         var inputTrue = t1True matmul t2True
         inputTrue *= t1True.sum() + t2True.mean()
@@ -1944,6 +1990,196 @@ abstract class TensorTestsBase {
 
         assertTensorEquals(t1True.grad(), t1.grad(), 1e-4f)
         assertTensorEquals(t2True.grad(), t2.grad(), 1e-4f)
+    }
+
+    @Test
+    fun should_calculate_batch_norm_for_specified_axis_in_train_mode() {
+        val tensor = randomTensor(10, 3, 4, 5, requiresGrad = true)
+
+        val axis = 1
+        val momentum = 0.1f
+        val epsilon = 1e-3f
+
+        val gamma = randomTensor(1, 3, 1, 1, requiresGrad = true)
+        val beta = randomTensor(1, 3, 1, 1, requiresGrad = true)
+
+        val runningMeanBase = randomTensor(1, 3, 1, 1)
+        val runningVarBase = randomTensor(1, 3, 1, 1)
+
+        val t = tensor.permute(1, 0, 2, 3).view(3, -1)
+        val (m, v) = t.meanVariance(1)
+        val mean = m.view(1, 3, 1, 1)
+        val variance = v.view(1, 3, 1, 1)
+
+        val runningMean = (mean.noGrad() * momentum) + runningMeanBase * (1f - momentum)
+        val runningVar = (variance.noGrad() * momentum) + runningVarBase * (1f - momentum)
+
+        var result = (tensor - mean) / sqrt(variance + epsilon)
+
+        result = result * gamma + beta
+
+        result.sum().backward()
+
+        val tensorGrad = tensor.grad()
+        val gammaGrad = gamma.grad()
+        val betaGrad = beta.grad()
+
+        (tensor as Variable).zeroGrad()
+        (gamma as Variable).zeroGrad()
+        (beta as Variable).zeroGrad()
+
+        val runningMean2 = runningMeanBase.reshape(3)
+        val runningVar2 = runningVarBase.reshape(3)
+
+        val result2 = tensor.batchNorm(axis, runningMean2, runningVar2, true, momentum, epsilon, gamma.view(3), beta.view(3))
+
+        result2.sum().backward()
+
+        assertTensorEquals(result, result2, 0.01f)
+        assertTensorEquals(runningMean.view(3), runningMean2)
+        assertTensorEquals(runningVar.view(3), runningVar2)
+        assertTensorEquals(tensorGrad, tensor.grad())
+        assertTensorEquals(gammaGrad, gamma.grad())
+        assertTensorEquals(betaGrad, beta.grad())
+    }
+
+    @Test
+    fun should_calculate_batch_norm_for_specified_axis_in_inference_mode() {
+        val tensor = randomTensor(10, 3, 4, 5)
+
+        val axis = 2
+        val momentum = 0.1f
+        val epsilon = 1e-3f
+
+        val gamma = randomTensor(1, 1, 4, 1)
+        val beta = randomTensor(1, 1, 4, 1)
+
+        val runningMean = randomTensor(1, 1, 4, 1)
+        val runningVar = randomTensor(1, 1, 4, 1)
+
+        var result = (tensor - runningMean) / sqrt(runningVar + epsilon)
+
+        result = result * gamma + beta
+
+        val runningMean2 = runningMean.reshape(4)
+        val runningVar2 = runningVar.reshape(4)
+
+        val result2 = tensor.batchNorm(axis, runningMean2, runningVar2, false, momentum, epsilon, gamma.view(4), beta.view(4))
+
+        assertTensorEquals(result, result2)
+    }
+
+    @Test
+    fun should_calculate_batch_norm_in_training_mode_without_gamma_and_beta() {
+        val tensor = randomTensor(10, 3, 4, 5, requiresGrad = true)
+
+        val axis = 1
+        val momentum = 0.1f
+        val epsilon = 1e-3f
+
+        val runningMeanBase = randomTensor(1, 3, 1, 1)
+        val runningVarBase = randomTensor(1, 3, 1, 1)
+
+        val t = tensor.permute(1, 0, 2, 3).view(3, -1)
+        val (m, v) = t.meanVariance(1)
+        val mean = m.view(1, 3, 1, 1)
+        val variance = v.view(1, 3, 1, 1)
+
+        val runningMean = (mean.noGrad() * momentum) + runningMeanBase * (1f - momentum)
+        val runningVar = (variance.noGrad() * momentum) + runningVarBase * (1f - momentum)
+
+        val result = (tensor - mean) / sqrt(variance + epsilon)
+
+        result.sum().backward()
+
+        val tensorGrad = tensor.grad()
+
+        (tensor as Variable).zeroGrad()
+
+        val runningMean2 = runningMeanBase.reshape(3)
+        val runningVar2 = runningVarBase.reshape(3)
+
+        val result2 = tensor.batchNorm(axis, runningMean2, runningVar2, true, momentum, epsilon, null, null)
+
+        result2.sum().backward()
+
+        assertTensorEquals(result, result2, 0.01f)
+        assertTensorEquals(runningMean.view(3), runningMean2)
+        assertTensorEquals(runningVar.view(3), runningVar2)
+        assertTensorEquals(tensorGrad, tensor.grad())
+    }
+
+    @Test
+    fun should_calculate_batchnorm_in_inference_mode_without_gamma_and_beta() {
+        val tensor = randomTensor(10, 3, 4, 5)
+
+        val axis = 2
+        val momentum = 0.1f
+        val epsilon = 1e-3f
+
+        val runningMean = randomTensor(1, 1, 4, 1)
+        val runningVar = randomTensor(1, 1, 4, 1)
+
+        val result = (tensor - runningMean) / sqrt(runningVar + epsilon)
+
+        val runningMean2 = runningMean.reshape(4)
+        val runningVar2 = runningVar.reshape(4)
+
+        val result2 = tensor.batchNorm(axis, runningMean2, runningVar2, false, momentum, epsilon, null, null)
+
+        assertTensorEquals(result, result2)
+    }
+
+    @Test
+    fun should_calculate_upsample_nearest_with_grads() {
+        val tensor = Tensor.randomTensor(5, 3, 4, 5, requiresGrad = true)
+
+        val scale = 3
+
+        var upsWithGrad = tensor.view(5, 3, 4, 1, 5, 1)
+            .expand(5, 3, 4, scale, 5, scale)
+            .view(5, 3, scale * 4, scale * 5)
+
+        val upsNoGrad = upsWithGrad.noGrad()
+        upsWithGrad = Tensor.exp(upsWithGrad)
+        upsWithGrad.sum().backward()
+        val tensorGrad = tensor.grad()
+
+        (tensor as Variable).zeroGrad()
+
+        var ups2WithGrad = tensor.upsample2d(UpsampleType.NEAREST, scale)
+        val ups2NoGrad = ups2WithGrad.noGrad()
+        ups2WithGrad = Tensor.exp(ups2WithGrad)
+        ups2WithGrad.sum().backward()
+
+        assertTensorEquals(upsNoGrad, ups2NoGrad)
+        assertTensorEquals(tensorGrad, tensor.grad())
+    }
+
+    @Test
+    fun should_calculate_upsample_nearest_on_3d_tensor_with_grad() {
+        val tensor = Tensor.randomTensor(3, 6, 5, requiresGrad = true)
+
+        val scale = 4
+
+        var upsWithGrad = tensor.view(3, 6, 1, 5, 1)
+            .expand(3, 6, scale, 5, scale)
+            .view(3, scale * 6, scale * 5)
+
+        val upsNoGrad = upsWithGrad.noGrad()
+        upsWithGrad = Tensor.exp(upsWithGrad)
+        upsWithGrad.sum().backward()
+        val tensorGrad = tensor.grad()
+
+        (tensor as Variable).zeroGrad()
+
+        var ups2WithGrad = tensor.upsample2d(UpsampleType.NEAREST, scale)
+        val ups2NoGrad = ups2WithGrad.noGrad()
+        ups2WithGrad = Tensor.exp(ups2WithGrad)
+        ups2WithGrad.sum().backward()
+
+        assertTensorEquals(upsNoGrad, ups2NoGrad)
+        assertTensorEquals(tensorGrad, tensor.grad())
     }
 
 }

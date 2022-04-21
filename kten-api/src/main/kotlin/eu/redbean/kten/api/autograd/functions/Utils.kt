@@ -1,5 +1,6 @@
 package eu.redbean.kten.api.autograd.functions
 
+import eu.redbean.kten.api.tensor.operations.TensorOperations
 import eu.redbean.kten.api.tensor.store.AbstractRawTensor
 
 /**
@@ -10,7 +11,7 @@ import eu.redbean.kten.api.tensor.store.AbstractRawTensor
  *
  * So this function takes care of both cases for the gradients.
  */
-fun mayUnexpand(rawTensor: AbstractRawTensor<Any>, oldShape: List<Int>): AbstractRawTensor<Any> {
+fun mayUnexpand(rawTensor: AbstractRawTensor<Any>, oldShape: List<Int>, ops: TensorOperations<AbstractRawTensor<Any>>): AbstractRawTensor<Any> {
     val unsqueezedNumberOfDims = rawTensor.dimensions - oldShape.size
     val expandedDims = rawTensor.shape.drop(unsqueezedNumberOfDims).zip(oldShape)
         .mapIndexed { index, (expanded, original) -> index to (expanded != original) }
@@ -19,11 +20,21 @@ fun mayUnexpand(rawTensor: AbstractRawTensor<Any>, oldShape: List<Int>): Abstrac
 
     var res = rawTensor
 
-    for (i in 0 until unsqueezedNumberOfDims)
+    var tensorToRelease: AbstractRawTensor<Any>
+    for (i in 0 until unsqueezedNumberOfDims) {
+        tensorToRelease = res
         res = res.sum(0, keepDimensions = false)
+        if (i > 0) {
+            ops.release(tensorToRelease)
+        }
+    }
 
-    expandedDims.forEach {
+    for ((i, it) in expandedDims.withIndex()) {
+        tensorToRelease = res
         res = res.sum(it, keepDimensions = true)
+        if (i > 0) {
+            ops.release(tensorToRelease)
+        }
     }
 
     return res

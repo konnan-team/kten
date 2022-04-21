@@ -19,7 +19,7 @@ object PlatformProvider {
      *
      * @throws IllegalArgumentException if the value is not in the 0.0 to 0.9 range
      */
-    var memoryUsageScaleHint = 0.2
+    var memoryUsageScaleHint = 0.85
         set(value) {
             if (value !in 0.0..0.9) {
                 throw IllegalArgumentException("Memory usage scale value must be in range 0.0 to 0.9")

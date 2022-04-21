@@ -1,6 +1,5 @@
 package eu.redbean.kten.api.autograd.functions
 
-import eu.redbean.kten.api.autograd.tensor.AGTensor
 import eu.redbean.kten.api.tensor.Tensor
 import eu.redbean.kten.api.tensor.operations.TensorOperations
 import eu.redbean.kten.api.tensor.store.AbstractRawTensor
@@ -13,7 +12,7 @@ abstract class UnaryTensorFunction(
 
     protected var modifiesShape = false
 
-    operator fun invoke(tensor: Tensor): UnaryTensorFunction {
+    open operator fun invoke(tensor: Tensor): UnaryTensorFunction {
         if (!modifiesShape)
             cachedShape = tensor.shape.toList()
         this.tensor = tensor
@@ -25,6 +24,10 @@ abstract class UnaryTensorFunction(
     }
 
     override fun internalForward() {
+        super.internalForward()
+        if (hasValue()) {
+            return
+        }
         val inputFunction = if (tensor is Function) tensor as Function else null
         inputFunction?.internalForward()
 

@@ -105,7 +105,7 @@ class StoreIndexing(
     private val size = shape.size
 
     val strides by lazy {
-        shape.indices.map { if (it == shape.size - 1) 0 else shape.drop(it + 1).toStoreSize() }
+        shape.indices.map { if (it == shape.size - 1) 1 else shape.drop(it + 1).toStoreSize() }
     }
 
     fun toTensorIndex(storeIndex: Int, dimensionOffset: (Int) -> Int = { 0 }): IntArray {

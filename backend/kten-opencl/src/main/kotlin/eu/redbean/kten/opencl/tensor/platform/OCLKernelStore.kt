@@ -6,7 +6,8 @@ import kotlin.reflect.full.findAnnotation
 
 class OCLKernelStore(
     private val context: cl_context,
-    private val commandQueue: cl_command_queue
+    private val commandQueue: cl_command_queue,
+    private val platformSpecInfo: OCLPlatformSpecInfo
 ) {
 
     private val program: cl_program
@@ -35,6 +36,16 @@ class OCLKernelStore(
     val col2imForTranspose: OCLCol2ImForTranspose by kernels
     val vol2col: OCLVol2Col by kernels
     val col2vol: OCLCol2Vol by kernels
+    val maxPoolingUpdateOutput: OCLMaxPoolUpdateOut by kernels
+    val maxPoolingUpdateGradIn: OCLMaxPoolUpdateGradIn by kernels
+    val avgPoolingUpdateOutput: OCLAvgPoolUpdateOut by kernels
+    val avgPoolingUpdateGradIn: OCLAvgPoolUpdateGradIn by kernels
+    val batchNormUpdateOutput: OCLBatchNormUpdateOutput by kernels
+    val batchNormUpdateGrads: OCLBatchNormUpdateGrads by kernels
+    val indexSelect: OCLIndexSelect by kernels
+    val indexAdd: OCLIndexAdd by kernels
+    val upsampleNearestUpdateOutput: OCLUpsampleNearestUpdateOutput by kernels
+    val upsampleNearestUpdateGrad: OCLUpsampleNearestUpdateGrad by kernels
 
     init {
         val source = this.javaClass.getResource("/kernels.cl").readText()
@@ -68,6 +79,16 @@ class OCLKernelStore(
         kernels += create(::OCLCol2ImForTranspose)
         kernels += create(::OCLVol2Col)
         kernels += create(::OCLCol2Vol)
+        kernels += create(::OCLMaxPoolUpdateOut)
+        kernels += create(::OCLMaxPoolUpdateGradIn)
+        kernels += create(::OCLAvgPoolUpdateOut)
+        kernels += create(::OCLAvgPoolUpdateGradIn)
+        kernels += create(::OCLBatchNormUpdateOutput)
+        kernels += create(::OCLBatchNormUpdateGrads)
+        kernels += create(::OCLIndexSelect)
+        kernels += create(::OCLIndexAdd)
+        kernels += create(::OCLUpsampleNearestUpdateOutput)
+        kernels += create(::OCLUpsampleNearestUpdateGrad)
     }
 
     private inline fun <reified T: AbstractOCLKernel> create(kernel: (OCLKernelDescriptor) -> T): Pair<String, T> {
@@ -78,7 +99,9 @@ class OCLKernelStore(
     private fun createDescriptor(kernelName: String): OCLKernelDescriptor = OCLKernelDescriptor(
         CL.clCreateKernel(program, kernelName, null),
         context,
-        commandQueue
+        commandQueue,
+        program,
+        platformSpecInfo
     )
 
     fun releaseAll() {

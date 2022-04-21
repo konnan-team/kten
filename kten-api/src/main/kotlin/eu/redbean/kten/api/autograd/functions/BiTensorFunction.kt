@@ -2,7 +2,6 @@ package eu.redbean.kten.api.autograd.functions
 
 import eu.redbean.kten.api.autograd.applyUnpack
 import eu.redbean.kten.api.autograd.map
-import eu.redbean.kten.api.autograd.tensor.AGTensor
 import eu.redbean.kten.api.autograd.utils.inferImplicitBroadcastShape
 import eu.redbean.kten.api.tensor.Tensor
 import eu.redbean.kten.api.tensor.operations.TensorOperations
@@ -30,6 +29,10 @@ abstract class BiTensorFunction(
     }
 
     override fun internalForward() {
+        super.internalForward()
+        if (hasValue()) {
+            return
+        }
         val inputFunctions = inputs.toList().filter { it is Function }.map { it as Function }
         inputFunctions.forEach(Function::internalForward)
 

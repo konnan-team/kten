@@ -302,6 +302,10 @@ abstract class AGTensor(
         return Scatter(ops)(inplaceSafe(this), axis, index, inplaceSafe(source))
     }
 
+    override fun indexSelect(axis: Int, index: Tensor): Tensor {
+        return IndexSelect(ops)(inplaceSafe(this), index, axis)
+    }
+
     override fun matmul(tensor: Tensor): Tensor {
         val t1 = inplaceSafe(this)
         val t2 = inplaceSafe(tensor)
@@ -339,9 +343,9 @@ abstract class AGTensor(
         val outShape = shape1[start..-1] + shape2[-1..end]
 
         //folding batches to first dimension to enable use of mm instead of bmm
-        t1 = t1.reshape(-1, shape1.last())
+        t1 = t1.view(-1, shape1.last())
 
-        var res = t1.mm(t2).reshape(outShape)
+        var res = t1.mm(t2).view(outShape)
 
         if (dim2 == 1)
             res = res.squeeze(-1)
@@ -366,13 +370,13 @@ abstract class AGTensor(
 
         // broadcasting to the new shape with the batch dimensions (to ensure the singleton dimensions are repeated correctly)
         // than reshape to the single batch dimension shape
-        val t1Expanded = tensor1.expand(expandBatchPortion + t1MatrixShape).reshape(listOf(-1) + t1MatrixShape)
-        val t2Expanded = t2.expand(expandBatchPortion + t2MatrixShape).reshape(listOf(-1) + t2MatrixShape)
+        val t1Expanded = tensor1.expand(expandBatchPortion + t1MatrixShape).view(listOf(-1) + t1MatrixShape)
+        val t2Expanded = t2.expand(expandBatchPortion + t2MatrixShape).view(listOf(-1) + t2MatrixShape)
 
         val resShape = expandBatchPortion + listOf(t1MatrixShape[0], t2MatrixShape[1])
 
         // batched matmul on the single batch dimension tensors, than reshape to the broadcast shape
-        var res = t1Expanded.bmm(t2Expanded).reshape(resShape)
+        var res = t1Expanded.bmm(t2Expanded).view(resShape)
 
         // if one of the input tensors were vectors, then the unsqueezed dimension must be squeezed in the result
         if (dim1 == 1)
@@ -443,15 +447,31 @@ abstract class AGTensor(
     }
 
     override fun variance(axis: Int, keepDimensions: Boolean, unbiased: Boolean): Tensor {
+        val (_, variance) = meanVariance(axis, keepDimensions, unbiased)
+        return variance
+    }
+
+    override fun meanVariance(axis: Int, keepDimensions: Boolean, unbiased: Boolean): Pair<Tensor, Tensor> {
         val tensor = inplaceSafe(this)
         val mean = tensor.mean(axis, true)
-        val zeroCentered = tensor - mean
         val elements = tensor.shape[tensor.shape.normalizeAxis(axis)] - if (unbiased) 1 else 0
-        return (zeroCentered * zeroCentered).sum(axis, keepDimensions) / elements.toFloat()
+        val zeroCentered = tensor - mean
+        val variance = (zeroCentered pow 2).sum(axis, keepDimensions) / elements.toFloat()
+        return mean to variance
     }
 
     override fun std(axis: Int, keepDimensions: Boolean, unbiased: Boolean): Tensor {
-        return sqrt(inplaceSafe(this).variance(axis, keepDimensions, unbiased))
+        val (_, std) = meanStd(axis, keepDimensions, unbiased)
+        return std
+    }
+
+    override fun meanStd(axis: Int, keepDimensions: Boolean, unbiased: Boolean): Pair<Tensor, Tensor> {
+        val (mean, variance) = meanVariance(axis, keepDimensions, unbiased)
+        return mean to sqrt(variance)
+    }
+
+    override fun view(newShape: List<Int>): Tensor {
+        return Reshape(ops, viewMode = true)(inplaceSafe(this), newShape)
     }
 
     override fun lt(tensor: Tensor): Tensor {
@@ -535,6 +555,10 @@ abstract class AGTensor(
 
     fun gradientAggregate(calculation: (Tensor) -> Tensor): Tensor {
         return GradientAggregatorFunction(ops)(inplaceSafe(this), calculation)
+    }
+
+    fun gradientAggregate(shape: List<Int>, calculation: (Tensor) -> Tensor): Tensor {
+        return GradientAggregatorFunction(ops)(inplaceSafe(this), calculation, shape)
     }
 
 }

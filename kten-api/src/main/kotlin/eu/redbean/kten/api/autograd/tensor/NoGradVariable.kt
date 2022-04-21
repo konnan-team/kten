@@ -173,6 +173,8 @@ class NoGradVariable(
 
     override fun reshape(newShape: List<Int>): Tensor = createNew(this.rawValue.reshape(newShape))
 
+    override fun view(newShape: List<Int>): Tensor = createNew(this.rawValue.view(newShape))
+
     override fun expand(newShape: List<Int>): Tensor = createNew(this.rawValue.broadcastTo(newShape))
 
     override fun permute(axes: List<Int>): Tensor = createNew(this.rawValue.permute(axes))
@@ -196,6 +198,8 @@ class NoGradVariable(
             return super.scatter(axis, index, source)
         return createNew(this.rawValue.scatter(axis, index.getRawValue(), source.getRawValue()))
     }
+
+    override fun indexSelect(axis: Int, index: Tensor): Tensor = createNew(this.rawValue.indexSelect(axis, index.getRawValue()))
 
     override fun gemm(addMatrix: Tensor, matrix: Tensor, alpha: Float, beta: Float): Tensor {
         if (addMatrix.requiresGrad || matrix.requiresGrad)

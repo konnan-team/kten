@@ -9,14 +9,11 @@ import eu.redbean.kten.api.autograd.utils.toStoreSize
 import eu.redbean.kten.api.tensor.Tensor
 import eu.redbean.kten.api.tensor.operations.TensorOperations
 import eu.redbean.kten.api.tensor.operations.TensorOperationsGarbageCollector
-import eu.redbean.kten.api.tensor.operations.nn.ConvolutionOperation
+import eu.redbean.kten.api.tensor.operations.nn.*
 import eu.redbean.kten.api.tensor.serialization.CommonSerializableTensorDescriptor
 import eu.redbean.kten.api.tensor.serialization.SerializableTensorData
 import eu.redbean.kten.api.tensor.store.AbstractRawTensor
-import eu.redbean.kten.jvm.tensor.operations.nn.JVMSpatialConvolution
-import eu.redbean.kten.jvm.tensor.operations.nn.JVMSpatialConvolutionTranspose
-import eu.redbean.kten.jvm.tensor.operations.nn.JVMVolumetricConvolution
-import eu.redbean.kten.jvm.tensor.operations.nn.JVMVolumetricConvolutionTranspose
+import eu.redbean.kten.jvm.tensor.operations.nn.*
 import eu.redbean.kten.jvm.tensor.store.JVMRawTensor
 import eu.redbean.kten.jvm.tensor.store.JVMRawTensorView
 import java.util.stream.IntStream
@@ -334,6 +331,27 @@ abstract class AbstractJVMTensorOperations: TensorOperations<JVMRawTensor> {
         )
     }
 
+    override fun spatialPooling(kernel: List<Int>, padding: List<Int>, stride: List<Int>, dilation: List<Int>, options: PoolingOptions): PoolingOperation<JVMRawTensor> {
+        return when (options.type) {
+            PoolingType.MAX -> JVMSpatialMaxPooling(
+                kernel[0], kernel[1],
+                padding[0], padding[1],
+                stride[0], stride[1],
+                dilation[0], dilation[1],
+                options.useCeil,
+                this
+            )
+            PoolingType.AVG -> JVMSpatialAvgPooling(
+                kernel[0], kernel[1],
+                padding[0], padding[1],
+                stride[0], stride[1],
+                options.useCeil,
+                options.includePadding,
+                this
+            )
+        }
+    }
+
     override fun volumetricConvolution(kernel: List<Int>, padding: List<Int>, stride: List<Int>, dilation: List<Int>): ConvolutionOperation<JVMRawTensor> {
         return JVMVolumetricConvolution(
             kernel[0], kernel[1], kernel[2],
@@ -353,6 +371,16 @@ abstract class AbstractJVMTensorOperations: TensorOperations<JVMRawTensor> {
             outputPadding[0], outputPadding[1], outputPadding[2],
             this
         )
+    }
+
+    override fun batchNorm(axis: Int, momentum: Float, epsilon: Float, training: Boolean): BatchNormOperation<JVMRawTensor> {
+        return JVMBatchNorm(axis, momentum, epsilon, training, this)
+    }
+
+    override fun upsample(upsampleType: UpsampleType, scale: Int): Upsample2DOperation<JVMRawTensor> {
+        return when (upsampleType) {
+            UpsampleType.NEAREST -> JVMUpsample2DNearest(scale, this)
+        }
     }
 
     override fun toSerializableData(rawTensor: JVMRawTensor): SerializableTensorData {

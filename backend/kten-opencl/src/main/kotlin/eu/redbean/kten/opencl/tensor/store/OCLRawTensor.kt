@@ -6,7 +6,6 @@ import eu.redbean.kten.api.tensor.store.AggregatingOperation
 import eu.redbean.kten.api.tensor.store.RangeTensorIndexing
 import eu.redbean.kten.api.tensor.store.SimpleTensorIndexing
 import eu.redbean.kten.opencl.tensor.platform.OCLEnvironment
-import eu.redbean.kten.opencl.tensor.platform.OCLPlatformInitializer
 import eu.redbean.kten.opencl.tensor.platform.kernels.OCLKernelConstant
 import eu.redbean.kten.opencl.tensor.platform.kernels.OCLKernelConstant.*
 import eu.redbean.kten.opencl.tensor.store.OCLMemoryObject.MemoryAccessOption.SOURCE
@@ -17,7 +16,7 @@ class OCLRawTensor(
     shape: List<Int>,
     store: OCLMemoryObject,
     val environment: OCLEnvironment
-): AbstractRawTensor<OCLMemoryObject>(shape, store) {
+) : AbstractRawTensor<OCLMemoryObject>(shape, store) {
 
     private var refCount = 1
     internal var mustSurviveGC = false
@@ -27,6 +26,9 @@ class OCLRawTensor(
     }
 
     internal fun incrementRef() {
+        if (storeReference.isReusable() || storeReference.isReleased()) {
+            throw IllegalStateException("Store reference is already marked for reuse or release. (Tensor shape: ${shape})")
+        }
         refCount++
     }
 
@@ -37,9 +39,9 @@ class OCLRawTensor(
             refCount--
 
         if (refCount == 0) {
-            OCLPlatformInitializer.releaseExecutor.execute {
-                environment.mayReuseOrRelease(storeReference)
-            }
+//            OCLPlatformInitializer.releaseExecutor.execute {
+            environment.mayReuseOrRelease(storeReference)
+//            }
             return true
         }
         return false
@@ -146,6 +148,8 @@ class OCLRawTensor(
 
     override fun times(other: AbstractRawTensor<OCLMemoryObject>) = elementwiseOpOnCommonShapedTensors(other, TIMES)
 
+    override fun timesAssign(other: AbstractRawTensor<OCLMemoryObject>) = inplaceElementwiseOpOnTensors(other, TIMES)
+
     override fun times(constant: Float) = tensorConstantOp(constant, TIMES)
 
     override fun timesAssign(constant: Float) = inplaceTensorConstantOp(constant, TIMES)
@@ -171,7 +175,7 @@ class OCLRawTensor(
     override fun log() = tensorMapping(LOG)
 
     private fun mapAggregatingOp(aggregatingOperation: AggregatingOperation): OCLKernelConstant {
-        return when(aggregatingOperation) {
+        return when (aggregatingOperation) {
             AggregatingOperation.SUM -> SUM
             AggregatingOperation.MEAN -> MEAN
             AggregatingOperation.MAX -> MAX
@@ -245,8 +249,17 @@ class OCLRawTensor(
         return this.storeReference[this.shape.tensorIndexing(indexes).storeIndex]
     }
 
-    override fun copy(): AbstractRawTensor<OCLMemoryObject> {
+    override fun copy(shallow: Boolean): AbstractRawTensor<OCLMemoryObject> {
+        if (shallow) {
+            storeReference.incrementRef()
+            return OCLRawTensor(shape.toList(), storeReference, environment)
+        }
         return OCLRawTensor(shape.toList(), storeReference.copyOf(), environment)
+    }
+
+    override fun view(shape: List<Int>): AbstractRawTensor<OCLMemoryObject> {
+        storeReference.incrementRef()
+        return OCLRawTensor(this.shape.reshape(shape), storeReference, environment)
     }
 
     override fun lt(tensor: AbstractRawTensor<OCLMemoryObject>) = elementwiseOpOnCommonShapedTensors(tensor, LT)
@@ -349,6 +362,18 @@ class OCLRawTensor(
             environment.commandQueue, null
         )
         return OCLRawTensor(resShape, res, environment)
+    }
+
+    override fun indexSelect(axis: Int, index: AbstractRawTensor<OCLMemoryObject>): AbstractRawTensor<OCLMemoryObject> {
+        val (normAxis, outputShape) = shape.indexSelectNormAxisShape(axis, index.shape)
+        val output = environment.memoryObject(outputShape.toStoreSize())
+        environment.kernelStore.indexSelect(storeReference, index.storeReference, output, shape, outputShape, index.shape[0], normAxis)
+        return OCLRawTensor(outputShape, output, environment)
+    }
+
+    override fun indexAdd(axis: Int, index: AbstractRawTensor<OCLMemoryObject>, src: AbstractRawTensor<OCLMemoryObject>, alpha: Float) {
+        val normAxis = shape.indexAddCheckShapesNormAxis(axis, index.shape, src.shape)
+        environment.kernelStore.indexAdd(storeReference, index.storeReference, src.storeReference, shape, src.shape, index.shape[0], normAxis, alpha)
     }
 
     override fun containsNan(): Boolean {

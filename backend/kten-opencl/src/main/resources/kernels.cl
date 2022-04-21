@@ -144,6 +144,7 @@ __kernel void tensor_mapping_op(__global float *tensor, __global float *res, con
         case OP_ROUND: res[gid] = round(tensor[gid]); break;
         case OP_TRUNC: res[gid] = trunc(tensor[gid]); break;
         case OP_RSQRT: res[gid] = rsqrt(tensor[gid]); break;
+        case OP_ABS: res[gid] = fabs(tensor[gid]); break;
         default: res[gid] = NAN;
     }
 }
@@ -155,14 +156,14 @@ __kernel void tensor_mapping_clamp(__global float *tensor, __global float *res, 
 }
 
 
-__kernel void reduction_op(__global float *tensor, __global float *res, const int elements, const int op) {
+__kernel void reduction_op(__global float *tensor, __global float *res, const int elements, const int elementsOrig, const int op) {
     int gid = get_global_id(0);
     res[gid] = 0.0f;
     for (int i = 0; i < elements; i++) {
         res[gid] += tensor[i];
     }
     if (op == OP_MEAN)
-        res[gid] = res[gid] / (float) elements;
+        res[gid] = res[gid] / (float) elementsOrig;
 }
 
 
@@ -339,6 +340,152 @@ int index_mapping(int *indices, int dimensions, int axis, int idx, __global int 
     return realIdx;
 }
 
+#define APPLY_FOR_AXIS(AXIS, ELEMENT_SIZE, ELEMENT_INDEX_IN_AXIS, DIMENSIONS, SHAPE, CODE) \
+{ \
+    int offset = 1; \
+    for (int shapeIndex = AXIS + 1; shapeIndex < DIMENSIONS; shapeIndex++) { \
+        offset *= SHAPE[shapeIndex]; \
+    } \
+    for (int counter = 0; counter < ELEMENT_SIZE; counter++) { \
+        int preset = counter / offset; \
+        int realIndex = counter % offset; \
+        realIndex = preset * SHAPE[AXIS] * offset + ELEMENT_INDEX_IN_AXIS * offset + realIndex; \
+        CODE \
+    } \
+}
+
+__kernel void batch_norm_update_out(
+                                    __global float *input,
+                                    __global float *output,
+                                    __global float *gamma,
+                                    __global float *beta,
+                                    __global float *runningMean,
+                                    __global float *runningVar,
+                                    __global float *currentMean,
+                                    __global float *currentStd,
+                                    __global int *inputShape,
+                                    const int dimensions,
+                                    const int inputElementSize,
+                                    const int axis,
+                                    const float epsilon,
+                                    const float momentum,
+                                    const int training
+) {
+    int gid = get_global_id(0);
+
+    int elementSizeAtSingleIndexForAxis = inputElementSize / inputShape[axis];
+
+    float mean;
+    float stdev = 0.0;
+
+    if (training == 1) {
+        float sum = 0.0;
+
+        APPLY_FOR_AXIS(axis, elementSizeAtSingleIndexForAxis, gid, dimensions, inputShape, sum += input[realIndex];)
+
+        mean = sum / elementSizeAtSingleIndexForAxis;
+
+        currentMean[gid] = mean;
+
+        sum = 0.0;
+        APPLY_FOR_AXIS(axis, elementSizeAtSingleIndexForAxis, gid, dimensions, inputShape, {
+            float inputMinusMean = input[realIndex] - mean;
+            sum += inputMinusMean * inputMinusMean;
+        })
+
+        if (sum != 0.0 || epsilon != 0.0) {
+            stdev = (float) (1.0 / sqrt(sum / elementSizeAtSingleIndexForAxis + epsilon));
+        }
+
+        currentStd[gid] = stdev;
+
+        if (runningMean && runningVar) {
+            runningMean[gid] = (momentum * mean) + ((1.0 - momentum) * runningMean[gid]);
+            float unbiasedVar = sum / (elementSizeAtSingleIndexForAxis - 1);
+            runningVar[gid] = (momentum * unbiasedVar) + ((1.0 - momentum) * runningVar[gid]);
+        }
+    } else {
+        mean = runningMean[gid];
+        stdev = 1.0 / sqrt(runningVar[gid] + epsilon);
+    }
+
+    float g = (gamma) ? gamma[gid] : 1.0;
+    float b = (beta) ? beta[gid] : 0.0;
+
+    APPLY_FOR_AXIS(axis, elementSizeAtSingleIndexForAxis, gid, dimensions, inputShape, {
+        output[realIndex] = (input[realIndex] - mean) * stdev * g + b;
+    })
+}
+
+__kernel void batch_norm_update_grads(
+                                __global float *input,
+                                __global float *gradOut,
+                                __global float *gamma,
+                                __global float *runningMean,
+                                __global float *runningVar,
+                                __global float *currentMean,
+                                __global float *currentStd,
+                                __global float *gradIn,
+                                __global float *gradGamma,
+                                __global float *gradBeta,
+                                __global int *inputShape,
+                                const int dimensions,
+                                const int inputElementSize,
+                                const int axis,
+                                const float epsilon,
+                                const int training
+) {
+    int gid = get_global_id(0);
+
+    int elementSizeAtSingleIndexForAxis = inputElementSize / inputShape[axis];
+
+    float mean;
+    float stdev;
+
+    float gamma_at_gid = (gamma) ? gamma[gid] : 1.0;
+
+    if (training == 1) {
+        mean = currentMean[gid];
+        stdev = currentStd[gid];
+    } else {
+        mean = runningMean[gid];
+        stdev = 1.0 / sqrt(runningVar[gid] + epsilon);
+    }
+
+    float sum = 0.0;
+    APPLY_FOR_AXIS(axis, elementSizeAtSingleIndexForAxis, gid, dimensions, inputShape,
+        sum += gradOut[realIndex];
+    )
+
+    float dotProd = 0.0;
+    APPLY_FOR_AXIS(axis, elementSizeAtSingleIndexForAxis, gid, dimensions, inputShape, {
+        dotProd += (input[realIndex] - mean) * gradOut[realIndex];
+    })
+
+    if (gradIn) {
+        if (training == 1) {
+            float dotpStdSq = dotProd * stdev * stdev / elementSizeAtSingleIndexForAxis;
+            float gradMean = sum / elementSizeAtSingleIndexForAxis;
+            APPLY_FOR_AXIS(axis, elementSizeAtSingleIndexForAxis, gid, dimensions, inputShape, {
+                float gradInBase = (input[realIndex] - mean) * dotpStdSq;
+                gradIn[realIndex] = (gradOut[realIndex] - gradMean - gradInBase) * stdev * gamma_at_gid;
+            })
+        } else {
+            APPLY_FOR_AXIS(axis, elementSizeAtSingleIndexForAxis, gid, dimensions, inputShape, {
+                gradIn[realIndex] = gradOut[realIndex] * stdev * gamma_at_gid;
+            })
+        }
+    }
+
+    if (gradGamma) {
+        gradGamma[gid] = dotProd * stdev;
+    }
+
+    if (gradBeta) {
+        gradBeta[gid] = sum;
+    }
+}
+
 __kernel void gather(__global float *tensor,
                      __global float *index,
                      __global float *res,
@@ -444,6 +591,59 @@ __kernel void inplace_scatter_fill(__global float *tensor,
 }
 
 
+__kernel void index_select(__global float *tensor,
+                           __global float *index,
+                           __global float *output,
+                           __global int *tensor_shape,
+                           __global int *output_shape,
+                           const int dimensions,
+                           const int index_size,
+                           const int tensor_size_at_axis,
+                           const int axis
+) {
+    int gid = get_global_id(0);
+    int i = gid;
+
+    APPLY_AT_AXIS(axis, i, dimensions, output_shape,
+        for (int k = 0; k < index_size; k++) {
+            int idx = index[k];
+            if (idx < 0 || idx >= tensor_size_at_axis) {
+                output[0] = NAN;
+                return;
+            }
+            output[index_mapping(indices, dimensions, axis, k, output_shape)] = tensor[index_mapping(indices, dimensions, axis, idx, tensor_shape)];
+        }
+    )
+}
+
+
+__kernel void index_add(__global float *tensor,
+                        __global float *index,
+                        __global float *source,
+                        __global int *tensor_shape,
+                        __global int *source_shape,
+                        const int dimensions,
+                        const int index_size,
+                        const int tensor_size_at_axis,
+                        const int axis,
+                        const float alpha
+) {
+    int gid = get_global_id(0);
+    int i = gid;
+
+    APPLY_AT_AXIS(axis, i, dimensions, tensor_shape,
+        for (int k = 0; k < index_size; k++) {
+            int idx = index[k];
+            if (idx < 0 || idx >= tensor_size_at_axis) {
+                tensor[0] = NAN;
+                return;
+            }
+            tensor[index_mapping(indices, dimensions, axis, idx, tensor_shape)] += source[index_mapping(indices, dimensions, axis, k, source_shape)] * alpha;
+        }
+    )
+}
+
+
 int next(int bits, ulong seed) {
     seed = (seed * 0x5DEECE66DL + 0xBL) & ((1L << 48) - 1);
     return seed >> (48 - bits);
@@ -468,7 +668,7 @@ float next_gauss(ulong seed, int gid) {
     } while(s >= 1.0f || s == 0.0f);
 
     if (cnt > 100)
-        return 1000.0f; // no way to indicate error
+        return 0.0f; // no way to indicate error
 
     float multiplier = sqrt(-2 * log(s) / s);
     if (gid % 2 == 0) {
@@ -569,20 +769,248 @@ __kernel void col2vol(__global float *col,
                       __global float *vol, const long volOffset)
 {
     int gid = get_global_id(0); // outputD * outputH * outputW
-        int colW = gid % outputW;
-        int colH = (gid / outputW) % outputH;
-        int colD = gid / outputW / outputH;
+    int colW = gid % outputW;
+    int colH = (gid / outputW) % outputH;
+    int colD = gid / outputW / outputH;
 
-        for (int colC = 0; colC < colChannels; colC++) {
-            int offsetW = colC % kernelW;
-            int offsetH = (colC / kernelW) % kernelH;
-            int offsetD = (colC / kernelW / kernelH) % kernelD;
-            int volC = colC / kernelD / kernelH / kernelW;
+    for (int colC = 0; colC < colChannels; colC++) {
+        int offsetW = colC % kernelW;
+        int offsetH = (colC / kernelW) % kernelH;
+        int offsetD = (colC / kernelW / kernelH) % kernelD;
+        int volC = colC / kernelD / kernelH / kernelW;
 
-            int volD = colD * strideD - paddingD + offsetD + dilationD;
-            int volH = colH * strideH - paddingH + offsetH * dilationH;
-            int volW = colW * strideW - paddingW + offsetW * dilationW;
+        int volD = colD * strideD - paddingD + offsetD + dilationD;
+        int volH = colH * strideH - paddingH + offsetH * dilationH;
+        int volW = colW * strideW - paddingW + offsetW * dilationW;
 
-            vol[((volC * inputD + volD) * inputH + volH) * inputW + volW + volOffset] += col[((colC * outputD + colD) * outputH + colH) * outputW + colW];
+        vol[((volC * inputD + volD) * inputH + volH) * inputW + volW + volOffset] += col[((colC * outputD + colD) * outputH + colH) * outputW + colW];
+    }
+}
+
+__kernel void max_pool_update_out(__global float *input,
+                                  __global float *output,
+                                  __global float *indices,
+                                  const int inputHeight, const int inputWidth,
+                                  const int outputHeight, const int outputWidth,
+                                  const int kernelH, const int kernelW,
+                                  const int strideH, const int strideW,
+                                  const int paddingH, const int paddingW,
+                                  const int dilationH, const int dilationW)
+{
+    int gid = get_global_id(0); // [batch] * inputPlane
+    int inputStartPos = gid * inputHeight * inputWidth;
+
+    for (int i = 0; i < outputHeight; i++) {
+        for (int j = 0; j < outputWidth; j++) {
+            int hStart = i * strideH - paddingH;
+            int wStart = j * strideW - paddingW;
+            int hEnd = min(hStart + (kernelH - 1) * dilationH + 1, inputHeight);
+            int wEnd = min(wStart + (kernelW - 1) * dilationW + 1, inputWidth);
+            while (hStart < 0) hStart += dilationH;
+            while (wStart < 0) wStart += dilationW;
+
+            int outputStartPos = gid * outputHeight * outputWidth + i * outputWidth + j;
+
+            float maxIndex = -1.0;
+            float maxVal = -MAXFLOAT;
+
+            for (int y = hStart; y < hEnd; y += dilationH) {
+                for (int x = wStart; x < wEnd; x += dilationW) {
+                    int idx = y * inputWidth + x;
+                    float val = input[inputStartPos + idx];
+                    if (val > maxVal) {
+                        maxVal = val;
+                        maxIndex = (float) idx;
+                    }
+                }
+            }
+
+            output[outputStartPos] = maxVal;
+            indices[outputStartPos] = maxIndex;
+        }
+    }
+}
+
+__kernel void max_pool_update_grad_in(__global float *gradIn,
+                                      __global float *gradOut,
+                                      __global float *indices,
+                                      const int inputHeight, const int inputWidth,
+                                      const int outputHeight, const int outputWidth)
+{
+    int gid = get_global_id(0); // [batch] * inputPlane
+    int gradInStartPos = gid * inputHeight * inputWidth;
+    int gradOutStartPos = gid * outputHeight * outputWidth;
+
+    for (int i = 0; i < outputHeight; i++) {
+        for (int j = 0; j < outputWidth; j++) {
+            int localPos = i * outputWidth + j;
+            int gradIndex = (int) indices[gradOutStartPos + localPos];
+            if (gradIndex != -1) {
+                gradIn[gradInStartPos + gradIndex] += gradOut[gradOutStartPos + localPos];
+            }
+        }
+    }
+}
+
+__kernel void avg_pool_update_out(__global float *input,
+                                  __global float *output,
+                                  const int inputHeight, const int inputWidth,
+                                  const int outputHeight, const int outputWidth,
+                                  const int kernelH, const int kernelW,
+                                  const int strideH, const int strideW,
+                                  const int paddingH, const int paddingW,
+                                  const int includePadding)
+{
+    int gid = get_global_id(0); // [batch] * inputPlane
+    int inputStartPos = gid * inputHeight * inputWidth;
+    int outputStartPos = gid * outputHeight * outputWidth;
+    for (int i = 0; i < outputHeight; i++) {
+        for (int j = 0; j < outputWidth; j++) {
+            int hStart = i * strideH - paddingH;
+            int wStart = j * strideW - paddingW;
+            int hEnd = min(hStart + kernelH, inputHeight + paddingH);
+            int wEnd = min(wStart + kernelW, inputWidth + paddingW);
+
+            int poolSize = (hEnd - hStart) * (wEnd - wStart);
+
+            hStart = max(hStart, 0);
+            wStart = max(wStart, 0);
+            hEnd = min(hEnd, inputHeight);
+            wEnd = min(wEnd, inputWidth);
+
+            int itemsInPool = (includePadding == 0) ? (hEnd - hStart) * (wEnd - wStart) : poolSize;
+
+            float sum = 0;
+
+            for (int y = hStart; y < hEnd; y++) {
+                for (int x = wStart; x < wEnd; x++) {
+                    sum += input[inputStartPos + y * inputWidth + x];
+                }
+            }
+            output[outputStartPos + i * outputWidth + j] = sum / ((float) itemsInPool);
+        }
+    }
+}
+
+__kernel void avg_pool_update_grad_in(__global float *gradIn,
+                                      __global float *gradOut,
+                                      const int inputHeight, const int inputWidth,
+                                      const int outputHeight, const int outputWidth,
+                                      const int kernelH, const int kernelW,
+                                      const int strideH, const int strideW,
+                                      const int paddingH, const int paddingW,
+                                      const int includePadding)
+{
+    int gid = get_global_id(0); // [batch] * inputPlane
+    int gradInStartPos = gid * inputHeight * inputWidth;
+    int gradOutStartPos = gid * outputHeight * outputWidth;
+    for (int i = 0; i < outputHeight; i++) {
+        for (int j = 0; j < outputWidth; j++) {
+            int hStart = i * strideH - paddingH;
+            int wStart = j * strideW - paddingW;
+            int hEnd = min(hStart + kernelH, inputHeight + paddingH);
+            int wEnd = min(wStart + kernelW, inputWidth + paddingW);
+
+            int poolSize = (hEnd - hStart) * (wEnd - wStart);
+
+            hStart = max(hStart, 0);
+            wStart = max(wStart, 0);
+            hEnd = min(hEnd, inputHeight);
+            wEnd = min(wEnd, inputWidth);
+
+            int itemsInPool = (includePadding == 0) ? (hEnd - hStart) * (wEnd - wStart) : poolSize;
+
+            int gradOutPos = gradOutStartPos + i * outputWidth + j;
+
+            for (int y = hStart; y < hEnd; y++) {
+                for (int x = wStart; x < wEnd; x++) {
+                    gradIn[gradInStartPos + y * inputWidth + x] += gradOut[gradOutPos] / ((float) itemsInPool);
+                }
+            }
+        }
+    }
+}
+
+__kernel void partial_fast_sum(__global float *tensor,
+                                __local float *temp,
+                                const int length,
+                                __global float *res)
+{
+    int gid = get_global_id(0);
+    float acc = 0;
+    while (gid < length) {
+        float element = tensor[gid];
+        acc += element;
+        gid += get_global_size(0);
+    }
+
+    int lid = get_local_id(0);
+    temp[lid] = acc;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    for (int offset = get_local_size(0) / 2; offset > 0; offset /= 2) {
+        if (lid < offset) {
+            temp[lid] += temp[lid + offset];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    if (lid == 0) {
+        res[get_group_id(0)] = temp[0];
+    }
+}
+
+
+__kernel void upsample_nearest_update_out(__global float *input,
+                                          __global float *output,
+                                          __global int *output_shape,
+                                          const int scale
+) {
+    int gid = get_global_id(0);
+
+    int stride0 = output_shape[3] * output_shape[2] * output_shape[1];
+    int strideIn0 = (output_shape[3] / scale) * (output_shape[2] / scale) * output_shape[1];
+    int stride1 = output_shape[3] * output_shape[2];
+    int strideIn1 = (output_shape[3] / scale) * (output_shape[2] / scale);
+    int stride2 = output_shape[3];
+    int strideIn2 = output_shape[3] / scale;
+
+    int iin0 = gid / stride0;
+    int iin1 = ((gid / stride1) % output_shape[1]);
+    int iin2 = ((gid / stride2) % output_shape[2]) / scale;
+    int iin3 = gid % output_shape[3] / scale;
+
+    int isrc = iin0 * strideIn0 + iin1 * strideIn1 + iin2 * strideIn2 + iin3;
+
+    output[gid] = input[isrc];
+}
+
+
+__kernel void upsample_nearest_update_grad(__global float *gradIn,
+                                           __global float *gradOut,
+                                           __global int *gradInShape,
+                                           const int scale
+) {
+    int gid = get_global_id(0);
+
+    int stride0 = gradInShape[3] * gradInShape[2] * gradInShape[1];
+    int strideOut0 = gradInShape[3] * scale * gradInShape[2] * scale * gradInShape[1];
+    int stride1 = gradInShape[3] * gradInShape[2];
+    int strideOut1 = gradInShape[3] * scale * gradInShape[2] * scale;
+    int stride2 = gradInShape[3];
+    int strideOut2 = gradInShape[3] * scale;
+
+    int iin0 = gid / stride0;
+    int iin1 = ((gid / stride1) % gradInShape[1]);
+    int iin2 = ((gid / stride2) % gradInShape[2]);
+    int iin3 = gid % gradInShape[3];
+
+    for (int y = 0; y < scale; y++) {
+        for (int x = 0; x < scale; x++) {
+            int ioutx = iin2 * scale + x;
+            int iouty = iin3 * scale + y;
+            int isrc = iin0 * strideOut0 + iin1 * strideOut1 + ioutx * strideOut2 + iouty;
+            gradIn[gid] += gradOut[isrc];
+        }
     }
 }

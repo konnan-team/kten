@@ -1,13 +1,12 @@
 package eu.redbean.kten.api.tensor.operations
 
 import eu.redbean.kten.api.tensor.Tensor
-import eu.redbean.kten.api.tensor.operations.nn.ConvolutionOperation
+import eu.redbean.kten.api.tensor.operations.nn.*
 import eu.redbean.kten.api.tensor.serialization.CommonSerializableTensorDescriptor
 import eu.redbean.kten.api.tensor.serialization.SerializableTensorData
 import eu.redbean.kten.api.tensor.store.AbstractRawTensor
-import java.io.Closeable
 
-interface TensorOperations<RAW_TYPE : AbstractRawTensor<*>>: BasicTensorOperations {
+interface TensorOperations<RAW_TYPE : AbstractRawTensor<*>> : BasicTensorOperations {
 
     fun createRaw(shape: List<Int>, init: (Int) -> Float): RAW_TYPE
 
@@ -78,7 +77,7 @@ interface TensorOperations<RAW_TYPE : AbstractRawTensor<*>>: BasicTensorOperatio
             if (transposeFirst) matrix1.shape[1] else matrix1.shape[0],
             if (transposeSecond) matrix2.shape[0] else matrix2.shape[1]
         )
-        val addMatrix = createRawFill(addMatrixShape,0.0f)
+        val addMatrix = createRawFill(addMatrixShape, 0.0f)
         return gemm(addMatrix, matrix1, matrix2, 1f, 0f, transposeFirst, transposeSecond)
     }
 
@@ -107,11 +106,29 @@ interface TensorOperations<RAW_TYPE : AbstractRawTensor<*>>: BasicTensorOperatio
 
     fun spatialConvolution(kernel: List<Int>, padding: List<Int>, stride: List<Int>, dilation: List<Int>): ConvolutionOperation<RAW_TYPE>
 
-    fun spatialConvolutionTranspose(kernel: List<Int>, padding: List<Int>, stride: List<Int>, dilation: List<Int>, outputPadding: List<Int>): ConvolutionOperation<RAW_TYPE>
+    fun spatialConvolutionTranspose(
+        kernel: List<Int>,
+        padding: List<Int>,
+        stride: List<Int>,
+        dilation: List<Int>,
+        outputPadding: List<Int>
+    ): ConvolutionOperation<RAW_TYPE>
 
     fun volumetricConvolution(kernel: List<Int>, padding: List<Int>, stride: List<Int>, dilation: List<Int>): ConvolutionOperation<RAW_TYPE>
 
-    fun volumetricConvolutionTranspose(kernel: List<Int>, padding: List<Int>, stride: List<Int>, dilation: List<Int>, outputPadding: List<Int>): ConvolutionOperation<RAW_TYPE>
+    fun volumetricConvolutionTranspose(
+        kernel: List<Int>,
+        padding: List<Int>,
+        stride: List<Int>,
+        dilation: List<Int>,
+        outputPadding: List<Int>
+    ): ConvolutionOperation<RAW_TYPE>
+
+    fun spatialPooling(kernel: List<Int>, padding: List<Int>, stride: List<Int>, dilation: List<Int>, options: PoolingOptions): PoolingOperation<RAW_TYPE>
+
+    fun batchNorm(axis: Int, momentum: Float, epsilon: Float, training: Boolean): BatchNormOperation<RAW_TYPE>
+
+    fun upsample(upsampleType: UpsampleType, scale: Int): Upsample2DOperation<RAW_TYPE>
 
     fun toSerializableData(rawTensor: RAW_TYPE): SerializableTensorData
 

@@ -1,5 +1,6 @@
 package eu.redbean.kten.api.tensor
 
+import eu.redbean.kten.api.tensor.Tensor.Companion.tensorOf
 import eu.redbean.kten.api.tensor.operations.TensorOperations
 import eu.redbean.kten.api.tensor.platform.PlatformProvider
 import eu.redbean.kten.api.tensor.platform.PlatformProvider.epsilon
@@ -978,6 +979,30 @@ abstract class Tensor(
      */
     abstract fun round(): Tensor
 
+    /**
+     * Returns a tensor with the sign values for `this` tensor.
+     *
+     * The resulting tensor will have the same shape as `this` tensor, and the scalar components of the result will be
+     * -1 if the scalar component of `this` is negative at the same position, 0 if it is zero and 1 if it is positive.
+     *
+     * Example:
+     * ```
+     * var tensor = arrange(9).reshape(3, 3)
+     * tensor = tensor - mean(tensor)
+     * println(tensor)
+     * println(tensor.sign())
+     * ```
+     * Output:
+     * ```
+     * [[-4.0, -3.0, -2.0],
+     * [-1.0, 0.0, 1.0],
+     * [2.0, 3.0, 4.0]]
+     *
+     * [[-1.0, -1.0, -1.0],
+     * [-1.0, 0.0, 1.0],
+     * [1.0, 1.0, 1.0]]
+     * ```
+     */
     abstract fun sign(): Tensor
 
     /**
@@ -1349,6 +1374,8 @@ abstract class Tensor(
      */
     abstract fun scatter(axis: Int, index: Tensor, source: Tensor): Tensor
 
+    abstract fun indexSelect(axis: Int, index: Tensor): Tensor
+
     /**
      * Performs the dot product / matrix multiplication operation on tensors, based on the tensors dimensionality.
      *
@@ -1392,23 +1419,125 @@ abstract class Tensor(
      */
     abstract infix fun matmul(tensor: Tensor): Tensor
 
+    /**
+     * Performs the General Matrix-matrix Multiplication
+     *
+     * The operation calculates `addMatrix = alpha * this @ matrix + beta * addMatrix`, where `this` tensor should be a
+     * `m x k` matrix, `matrix` should be a `k x n` matrix, the `addMatrix` should be a `m x n` matrix, alpha and beta are
+     * scalar scaling parameters, and the `@` operator represents the matrix multiplication operation. The result of this
+     * method is the `addMatrix`.
+     *
+     * Note: This operation modifies the `addMatrix` inplace, but only the result of the operation captures the operation in a
+     * autograd graph, so using the input instance to back propagate through will not give the same gradients as back-propagating
+     * through the result of this operation.
+     */
     abstract fun gemm(addMatrix: Tensor, matrix: Tensor, alpha: Float = 1f, beta: Float = 1f): Tensor
 
+    /**
+     * Performs a matrix-matrix multiplication
+     *
+     * This operation can only operate on 2D tensors. (For more details see [matmul] which is a more general purpose operation,
+     * that uses this for matrix-matrix multiplications)
+     *
+     * @see matmul
+     */
     abstract fun mm(matrix: Tensor): Tensor
 
+    /**
+     * General Matrix-matrix multiplication that works on tensors with 3 dimensions, where first dimension is a batch dimension.
+     * (For more details see [gemm])
+     *
+     * @see gemm
+     */
     abstract fun batchedGemm(addTensor: Tensor, tensor: Tensor, alpha: Float = 1f, beta: Float = 1f): Tensor
 
+    /**
+     * Matrix-matrix multiplication operation performed on 3D tensors, where the first dimension is a batch dimension.
+     *
+     * @see mm
+     * @see matmul
+     */
     abstract fun bmm(tensor: Tensor): Tensor
 
+    /**
+     * Performs the General Matrix-vector multiplication
+     *
+     * The operation calculates `addVector = alpha * this @ vector + beta * vector`, where `@` denotes the matrix-vector multiplication
+     * operation, and `this` tensor is a matrix. The operation returns the `addVector` after the calculation.
+     *
+     * Note: This operation modifies the `addVector` inplace, but only the result of the operation captures the operation in a
+     * autograd graph, so using the input instance to back propagate through will not give the same gradients as back-propagating
+     * through the result of this operation.
+     */
     abstract fun gemv(addVector: Tensor, vector: Tensor, alpha: Float = 1f, beta: Float = 1f): Tensor
 
+    /**
+     * Performs a matrix-vector multiplication, where `this` tensor must be a 2D tensor, and the [vector] parameter must be a 1D tensor.
+     * The result is a 1D tensor (vector).
+     */
     abstract fun mv(vector: Tensor): Tensor
 
+    /**
+     * Calculates the dot product of two vectors.
+     * `this` tensor and the [vector] parameter tensor must be 1D tensor, and the result is a singleton tensor (a 1D tensor with a single
+     * scalar component).
+     *
+     * Example:
+     * ```
+     * val tensor = tensorOf(2, 4, 6)
+     * val vector = tensorOf(1, 2, 3)
+     *
+     * println(tensor.dot(vector))
+     * ```
+     * Output:
+     * ```
+     * [28.0]
+     * ```
+     */
     abstract fun dot(vector: Tensor): Tensor
 
     abstract fun variance(axis: Int, keepDimensions: Boolean = false, unbiased: Boolean = true): Tensor
 
     abstract fun std(axis: Int, keepDimensions: Boolean = false, unbiased: Boolean = true): Tensor
+
+    /**
+     *
+     */
+    abstract fun meanVariance(axis: Int, keepDimensions: Boolean = false, unbiased: Boolean = true): Pair<Tensor, Tensor>
+
+    abstract fun meanStd(axis: Int, keepDimensions: Boolean = false, unbiased: Boolean = true): Pair<Tensor, Tensor>
+
+    /**
+     * Creates a view for the tensor with the same data and specified shape. (Similar to [reshape] but without copying the underlying data)
+     *
+     * Example:
+     * ```
+     * val tensor = arrange(4)
+     * println(tensor)
+     * val t2by2 = tensor.view(2, 2)
+     * println(t2by2)
+     *
+     * tensor[0] = 4f
+     *
+     * println(t2by2)
+     * ```
+     * Output:
+     * ```
+     * [0.0, 1.0, 2.0, 3.0]
+     *
+     * [[0.0, 1.0],
+     * [2.0, 3.0]]
+     *
+     * [[4.0, 1.0],
+     * [2.0, 3.0]]
+     * ```
+     *
+     * @throws IllegalArgumentException If the specified [newShape] cannot be applied to the tensor
+     * @see [reshape]
+     */
+    abstract fun view(newShape: List<Int>): Tensor
+
+    fun view(vararg newShape: Int) = view(newShape.asList())
 
     abstract infix fun lt(tensor: Tensor): Tensor
     abstract infix fun lte(tensor: Tensor): Tensor
@@ -1530,8 +1659,12 @@ abstract class Tensor(
 
         fun arrange(value: Int): Tensor = arrange(value.toFloat())
 
-        fun zeros(vararg shape: Int): Tensor {
-            return invoke(shape.toList())
+        fun zeros(vararg shape: Int, requiresGrad: Boolean = false): Tensor {
+            return invoke(shape.toList(), requiresGrad)
+        }
+
+        fun zeros(shape: List<Int>, requiresGrad: Boolean = false): Tensor {
+            return invoke(shape, requiresGrad)
         }
 
         fun zerosLike(other: Tensor): Tensor {
@@ -1552,6 +1685,10 @@ abstract class Tensor(
 
         fun randomTensor(shape: List<Int>, requiresGrad: Boolean = false): Tensor {
             return PlatformProvider.defaultOps().createRandom(shape, requiresGrad)
+        }
+
+        fun randomLike(tensor: Tensor, requiresGrad: Boolean = false): Tensor {
+            return tensor.ops.createRandom(tensor.shape, requiresGrad)
         }
 
         fun bernoulliDistribution(shape: List<Int>, rate: Float, requiresGrad: Boolean = false): Tensor {

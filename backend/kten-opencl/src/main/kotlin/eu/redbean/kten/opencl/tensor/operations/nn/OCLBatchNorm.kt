@@ -56,7 +56,6 @@ class OCLBatchNorm(
         betaRequiresGrad: Boolean
     ): BatchNormOperation.BatchNormGrads<OCLRawTensor> {
         if (inRequiresGrad.not() && gammaRequiresGrad.not() && betaRequiresGrad.not()) {
-            ops.release(listOf(currentMean, currentStd))
             return BatchNormOperation.BatchNormGrads(null, null, null)
         }
 
@@ -80,8 +79,6 @@ class OCLBatchNorm(
             epsilon,
             training
         )
-
-        ops.release(listOf(currentMean, currentStd))
 
         return BatchNormOperation.BatchNormGrads(
             gradIn, gradGamma, gradBeta

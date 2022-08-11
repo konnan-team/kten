@@ -55,6 +55,10 @@ class Variable(
         gradient *= value
     }
 
+    fun inplaceMultiplyValue(other: Float) {
+        value *= other
+    }
+
     override fun retainGrad(): Tensor {
         return this
     }

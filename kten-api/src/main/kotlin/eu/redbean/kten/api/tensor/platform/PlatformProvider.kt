@@ -1,6 +1,7 @@
 package eu.redbean.kten.api.tensor.platform
 
 import eu.redbean.kten.api.tensor.operations.BasicTensorOperations
+import eu.redbean.kten.api.tensor.operations.PlatformMetricsProvider
 import eu.redbean.kten.api.tensor.operations.TensorOperations
 import eu.redbean.kten.api.tensor.store.AbstractRawTensor
 import org.reflections.Reflections
@@ -15,17 +16,28 @@ object PlatformProvider {
      * be used. (Note: if this value is set for example to 0.2 it won't mean exactly 20% of memory will be used, because memory management depends on a
      * lot of factors. This value should be viewed as a hint to the platform implementation's garbage collector.)
      *
-     * Value must be between 0.0 and 0.9
+     * Value must be between 0.0 and 0.99
      *
-     * @throws IllegalArgumentException if the value is not in the 0.0 to 0.9 range
+     * @throws IllegalArgumentException if the value is not in the 0.0 to 0.99 range
      */
     var memoryUsageScaleHint = 0.85
         set(value) {
-            if (value !in 0.0..0.9) {
-                throw IllegalArgumentException("Memory usage scale value must be in range 0.0 to 0.9")
+            if (value !in 0.0..0.99) {
+                throw IllegalArgumentException("Memory usage scale value must be in range 0.0 to 0.99")
             }
             field = value
         }
+
+    /**
+     * If set to true, it allows the device memory manager, to move tensors to the system memory, when the memory requirements exceed the device
+     * memory usage limit.
+     *
+     * The device memory usage limit is calculated by the [memoryUsageScaleHint].
+     *
+     * The memory management strategy is implementation specific, but the basic idea is to move tensor's data, from the device memory to system memory,
+     * that has not been accessed lately.
+     */
+    var useJVMMemoryAsCache = false
 
     private val platforms = mutableMapOf<String, TensorOperations<AbstractRawTensor<Any>>>()
 
@@ -95,6 +107,14 @@ object PlatformProvider {
 
     fun getAvailablePlatforms(): List<PlatformInfo> {
         return Collections.unmodifiableList(platformInfos)
+    }
+
+    fun getPlatformMetrics(platform: String? = null): Map<String, Float> {
+        val ops = tensorOperations(platform)
+        if (ops is PlatformMetricsProvider) {
+            return ops.getMetrics()
+        }
+        return mapOf()
     }
 
 }

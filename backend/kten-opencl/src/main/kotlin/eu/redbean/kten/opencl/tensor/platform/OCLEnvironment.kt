@@ -43,56 +43,56 @@ class OCLEnvironment(deviceIndex: Int) {
 
     private val stopTheWorld = AtomicBoolean()
 
+    private val maxMemory: Long
+
+    private val maxAllowedEstimatedMemUsage: Long
+
+    private var memoryManagementWarningPrinted = false
+
     init {
-        val maxMemory = oclPlatformInfos[deviceIndex]!!.availableMemory
-        val maxAllowedEstimatedMemUsage = (maxMemory * PlatformProvider.memoryUsageScaleHint).toLong()
+        maxMemory = oclPlatformInfos[deviceIndex]!!.availableMemory
+        maxAllowedEstimatedMemUsage = (maxMemory * PlatformProvider.memoryUsageScaleHint).toLong()
         val cleanupThread = Thread {
             while (true) {
-                if (estReusePoolMemUsage.get() > (maxAllowedEstimatedMemUsage * .75).toLong()) {
-                    memObjectReusePool.forEachValue(10L) {
-                        if (it.size > 5)
-                            while (it.size > 5 && estReusePoolMemUsage.get() > (maxAllowedEstimatedMemUsage * .75).toLong()) {
-                                val memObject = it.poll()
-                                if (memObject?.isReusable() == true) { // just to be safe
-                                    estReusePoolMemUsage.addAndGet(-(memObject.memSize))
-                                    memObject.release()
-                                }
-                            }
-                    }
-                }
-                if (estActiveMemUsage.get() > maxAllowedEstimatedMemUsage) {
-                    stopTheWorld.set(true)
-                    memObjectReusePool.forEachValue(10L) {
-                        while (it.size > 0) {
-                            val memObject = it.poll()
-                            if (memObject?.isReusable() == true) { // just to be safe
-                                estReusePoolMemUsage.addAndGet(-(memObject.memSize))
-                                memObject.release()
-                            }
-                        }
-                    }
-                    if (estActiveMemUsage.get() > maxAllowedEstimatedMemUsage) {
-                        activeMemObjects
-                            .filter { it.manageUnusedDeviceMemory() }
-                            .forEach {
-                                activeMemObjects.remove(it)
-                                estActiveMemUsage.addAndGet(-it.memSize)
-                            }
-                    }
-
-                    while (estActiveMemUsage.get() > maxMemory * 0.9) {
-                        val memObject = activeMemObjects.poll()
-                        memObject.manageUnusedDeviceMemory(true)
-                        estActiveMemUsage.addAndGet(-memObject.memSize)
-                    }
-                    stopTheWorld.set(false)
-                }
-
+                memoryCleanup()
                 Thread.sleep(100)
             }
         }
         cleanupThread.isDaemon = true
         cleanupThread.start()
+    }
+
+    fun memoryCleanup() {
+        if (stopTheWorld.get().not() && estActiveMemUsage.get() > maxAllowedEstimatedMemUsage) {
+            stopTheWorld.set(true)
+            memObjectReusePool.forEachValue(10L) {
+                while (it.size > 0) {
+                    val memObject = it.poll()
+                    if (memObject?.isReusable() == true) { // just to be safe
+                        estReusePoolMemUsage.addAndGet(-(memObject.memSize))
+                        memObject.release()
+                    }
+                }
+            }
+            if (PlatformProvider.useJVMMemoryAsCache.not() && estActiveMemUsage.get() > maxAllowedEstimatedMemUsage) {
+                activeMemObjects
+                    .filter { it.manageUnusedDeviceMemory() }
+                    .forEach {
+                        activeMemObjects.remove(it)
+                        estActiveMemUsage.addAndGet(-it.memSize)
+                    }
+            }
+            stopTheWorld.set(false)
+        }
+    }
+
+    fun getPlatformMetrics(): Map<String, Float> {
+        val estMemoryUsageInMB = estActiveMemUsage.get() / 1024f / 1024f
+        val estReuseMemoryUsageInMB = estReusePoolMemUsage.get() / 1024f / 1024f
+        return mapOf(
+            "Estimated memory usage (MB)" to estMemoryUsageInMB,
+            "Estimated reuse pool memory usage (MB)" to estReuseMemoryUsageInMB
+        )
     }
 
     private fun getMemObjectFromPool(size: Int): OCLMemoryObject? {
@@ -116,6 +116,52 @@ class OCLEnvironment(deviceIndex: Int) {
         estActiveMemUsage.addAndGet(-memoryObject.memSize)
     }
 
+    /**
+     * If system memory caching is enabled, it tries to clean up the reuse pool first, if memory limit is hit. If that doesn't help
+     * it tries to clean up space on the device for the required memory allocation, by transferring memory objects' data from the device
+     * memory to the JVM Heap.
+     *
+     * This is called for every memory object allocation. It runs in an STW event, to avoid problems in the cleanup thread.
+     *
+     * The first time it moves memory objects from device to system memory it prints a warning, that this will cause performance issues.
+     */
+    private fun manageActiveMemory(requiredMemory: Long) {
+        if (PlatformProvider.useJVMMemoryAsCache.not())
+            return
+
+        if (estActiveMemUsage.get() >= maxAllowedEstimatedMemUsage) {
+            memoryCleanup()
+        }
+
+        if (estActiveMemUsage.get() >= maxAllowedEstimatedMemUsage) {
+            stopTheWorld.set(true)
+
+            if (memoryManagementWarningPrinted.not()) {
+                println("WARNING: Active device memory limit exceeded. Usage of system memory cache is enabled, " +
+                        "which means tensors will be moved to the JVM Heap.")
+                println("This may cause significant slowdown of the calculations, and if not enough heap space is provided, " +
+                        "even can lead to OutOfMemory error.")
+                memoryManagementWarningPrinted = true
+            }
+
+            var freeableSize = 0L
+            val lastAccessed = activeMemObjects.sortedBy { it.lastAccess }
+            val moveToSystemMem = mutableListOf<OCLMemoryObject>()
+            for (memObj in lastAccessed) {
+                moveToSystemMem.add(memObj)
+                freeableSize += memObj.memSize
+                if (freeableSize >= requiredMemory)
+                    break
+            }
+            moveToSystemMem.forEach {
+                activeMemObjects.remove(it)
+                it.manageUnusedDeviceMemory(true)
+                estActiveMemUsage.addAndGet(-it.memSize)
+            }
+            stopTheWorld.set(false)
+        }
+    }
+
     fun memoryObjectOf(array: FloatArray, synchronization: SynchronizationLevel = OFF_DEVICE): OCLMemoryObject {
         val memoryObjectFromPool = getMemObjectFromPool(array.size)
         if (memoryObjectFromPool?.isReusable() == true) {
@@ -123,6 +169,8 @@ class OCLEnvironment(deviceIndex: Int) {
             estReusePoolMemUsage.addAndGet(-memoryObjectFromPool.memSize)
             return memoryObjectFromPool
         }
+
+        manageActiveMemory(array.size.toLong() * Sizeof.cl_float)
 
         return OCLMemoryObject(array, this, synchronization)
     }
@@ -134,6 +182,8 @@ class OCLEnvironment(deviceIndex: Int) {
             estReusePoolMemUsage.addAndGet(-memoryObjectFromPool.memSize)
             return memoryObjectFromPool
         }
+
+        manageActiveMemory(size.toLong() * Sizeof.cl_float)
 
         return OCLMemoryObject(size, this, synchronization)
     }

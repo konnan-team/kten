@@ -145,8 +145,6 @@ class BatchNormalizationFunction(
             this.beta?.requiresGrad ?: false
         )
 
-        ops.release(currentMean, currentStd)
-
         return listOf(gradIn, gradGamma, gradBeta)
     }
 

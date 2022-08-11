@@ -52,7 +52,7 @@ abstract class AbstractBlasFunction(
     protected fun calculateAddTensorGrad(gradient: AbstractRawTensor<Any>): AbstractRawTensor<Any>? {
         var addTensorGrad: AbstractRawTensor<Any>? = null
         if (inputs.first is AGTensor && inputs.first.requiresGrad) {
-            addTensorGrad = mayUnexpand(gradient, addTensorShape, ops)
+            addTensorGrad = mayUnexpand(gradient.copy(shallow = true), addTensorShape, ops)
             if (beta != 1f)
                 addTensorGrad = addTensorGrad * beta
         }

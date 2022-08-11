@@ -1552,6 +1552,8 @@ abstract class Tensor(
     abstract infix fun eq(value: Float): Tensor
     abstract infix fun neq(value: Float): Tensor
 
+    abstract fun maskedFill(mask: Tensor, value: Float): Tensor
+
 
     internal abstract fun forward()
 
@@ -1705,6 +1707,17 @@ abstract class Tensor(
             return invoke(listOf(rows, cols)) {
                 if (it / cols == it % cols) 1f else 0f
             }
+        }
+
+        fun oneHot(tensor: Tensor, classes: Int): Tensor {
+            if (tensor.dimensions != 1) {
+                throw IllegalArgumentException("One hot encoding can only be applied to 1D tensors, but got tensor with shape: ${tensor.shape}")
+            }
+            return invoke(listOf(tensor.shape[0], classes)) {
+                val idx = it / classes
+                val classIdx = it % classes
+                if (classIdx == tensor.getValue(listOf(idx)).toInt()) 1f else 0f
+            }.toPlatform(tensor.platform)
         }
 
         fun <T> deserializeWith(serializer: TensorSerializer<T>, serializedValue: T): Tensor {

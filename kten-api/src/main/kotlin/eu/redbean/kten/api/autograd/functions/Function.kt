@@ -108,7 +108,7 @@ abstract class Function(
     override fun backwardWithGrad(gradient: AbstractRawTensor<Any>) {
         if (registeredAsInputIn.size > 1) { //TODO check again because it is still buggy somehow (model layer grad aggr. gives different result and faster)
             if (gradCache == null) {
-                gradCache = gradient //.copy()
+                gradCache = gradient.copy()
             } else {
                 gradCache!!.plusAssign(gradient)
             }
@@ -123,8 +123,8 @@ abstract class Function(
             gradients = doBackward(gradCache!!)
         } else {
             gradients = doBackward(gradient)
-            ops.release(gradient)
         }
+
 
         backwardRan = true
 
@@ -135,6 +135,7 @@ abstract class Function(
 
         backwardToInputs(gradients)
 
+        ops.release(gradient)
         if (gradCache != null)
             ops.release(gradCache!!)
     }

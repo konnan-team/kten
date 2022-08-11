@@ -1,6 +1,7 @@
 package eu.redbean.kten.tensor.tests
 
 import eu.redbean.kten.api.autograd.functions.nn.batchNorm
+import eu.redbean.kten.api.autograd.functions.nn.softmaxCrossEntropy
 import eu.redbean.kten.api.autograd.functions.nn.upsample2d
 import eu.redbean.kten.api.autograd.tensor.AGTensor
 import eu.redbean.kten.api.autograd.tensor.Variable
@@ -8,12 +9,14 @@ import eu.redbean.kten.api.tensor.*
 import eu.redbean.kten.api.tensor.Constants.all
 import eu.redbean.kten.api.tensor.Tensor.Companion.arrange
 import eu.redbean.kten.api.tensor.Tensor.Companion.concat
+import eu.redbean.kten.api.tensor.Tensor.Companion.log
 import eu.redbean.kten.api.tensor.Tensor.Companion.mean
 import eu.redbean.kten.api.tensor.Tensor.Companion.randomTensor
 import eu.redbean.kten.api.tensor.Tensor.Companion.sqrt
 import eu.redbean.kten.api.tensor.Tensor.Companion.sum
 import eu.redbean.kten.api.tensor.Tensor.Companion.tensorOf
 import eu.redbean.kten.api.tensor.operations.nn.UpsampleType
+import eu.redbean.kten.api.tensor.platform.PlatformProvider
 import eu.redbean.kten.api.tensor.serialization.serializers.tensorFromBinary
 import eu.redbean.kten.api.tensor.serialization.serializers.tensorFromJson
 import eu.redbean.kten.api.tensor.serialization.serializers.toBinary
@@ -22,6 +25,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertAll
+import kotlin.random.Random
 
 abstract class TensorTestsBase {
 
@@ -1868,6 +1872,21 @@ abstract class TensorTestsBase {
         )
     }
 
+    @Test
+    fun should_fill_tensor_partialy() {
+        var t1 = Tensor.ones(2, 3)
+        t1 *= 2f
+        t1[0..0, 1..2] = 0f
+
+        assertTensorEquals(
+            tensorOf(
+                2, 0, 0,
+                2, 2, 2
+            ).view(2, 3),
+            t1
+        )
+    }
+
     //TODO test compare functions
 
     @Test
@@ -2035,7 +2054,7 @@ abstract class TensorTestsBase {
 
         result2.sum().backward()
 
-        assertTensorEquals(result, result2, 0.01f)
+        assertTensorEquals(result, result2, 0.02f)
         assertTensorEquals(runningMean.view(3), runningMean2)
         assertTensorEquals(runningVar.view(3), runningVar2)
         assertTensorEquals(tensorGrad, tensor.grad())
@@ -2180,6 +2199,28 @@ abstract class TensorTestsBase {
 
         assertTensorEquals(upsNoGrad, ups2NoGrad)
         assertTensorEquals(tensorGrad, tensor.grad())
+    }
+
+    @Test
+    fun should_calculate_softmax_cross_entropy_from_logits() {
+        val tensor = randomTensor(256, 2048, requiresGrad = true)
+        val tensor2 = tensor.copy().asVariable(requiresGrad = true)
+
+        val targets = Tensor(256) { Random.nextInt(2048).toFloat() }
+        val targetsOneHot = Tensor.oneHot(targets, 2048)
+
+        val res = tensor.softmaxCrossEntropy(targets)
+        res.backward()
+
+        val expVal = Tensor.exp(tensor2 - tensor2.max(-1, keepDimensions = true))
+        val softmax = expVal / expVal.sum(-1, keepDimensions = true)
+
+        val softmaxNorm = (softmax / softmax.sum(-1, keepDimensions = true)).clamp(PlatformProvider.epsilon, 1f - PlatformProvider.epsilon)
+        val res2 = mean(-(targetsOneHot * log(softmaxNorm)).sum(-1))
+        res2.backward()
+
+        assertTensorEquals(res2, res)
+        assertTensorEquals(tensor2.grad(), tensor.grad())
     }
 
 }

@@ -123,6 +123,12 @@ __kernel void tensor_const_assign_op(__global float *tensor, const float value, 
 }
 
 
+__kernel void masked_fill(__global float *tensor, __global float *mask, __global float *res, const float value) {
+    int gid = get_global_id(0);
+    res[gid] = mask[gid] == 1 ? value : tensor[gid];
+}
+
+
 __kernel void tensor_mapping_op(__global float *tensor, __global float *res, const int op) {
     int gid = get_global_id(0);
     switch(op) {

@@ -243,4 +243,6 @@ abstract class AbstractRawTensor<STORE_TYPE>(
 
     abstract fun inplaceFill(value: Float)
 
+    abstract fun maskedFill(mask: AbstractRawTensor<STORE_TYPE>, value: Float): AbstractRawTensor<STORE_TYPE>
+
 }

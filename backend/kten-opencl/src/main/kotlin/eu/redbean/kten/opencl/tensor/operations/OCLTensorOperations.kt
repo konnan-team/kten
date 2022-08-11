@@ -7,6 +7,7 @@ import eu.redbean.kten.api.autograd.utils.normalizeAxis
 import eu.redbean.kten.api.autograd.utils.toIndexRanges
 import eu.redbean.kten.api.autograd.utils.toStoreSize
 import eu.redbean.kten.api.tensor.Tensor
+import eu.redbean.kten.api.tensor.operations.PlatformMetricsProvider
 import eu.redbean.kten.api.tensor.operations.TensorOperations
 import eu.redbean.kten.api.tensor.operations.TensorOperationsGarbageCollector
 import eu.redbean.kten.api.tensor.operations.nn.*
@@ -27,7 +28,7 @@ import org.jocl.blast.CLBlastTranspose
 class OCLTensorOperations(
     override val platformKey: String,
     environmentInitializer: () -> OCLEnvironment
-): TensorOperations<OCLRawTensor> {
+): TensorOperations<OCLRawTensor>, PlatformMetricsProvider {
 
     internal val environment: OCLEnvironment by lazy(environmentInitializer)
 
@@ -376,4 +377,7 @@ class OCLTensorOperations(
         }
         return NoGradVariable(this as TensorOperations<AbstractRawTensor<Any>>, dataRaw as AbstractRawTensor<Any>)
     }
+
+    override fun getMetrics() = environment.getPlatformMetrics()
+
 }

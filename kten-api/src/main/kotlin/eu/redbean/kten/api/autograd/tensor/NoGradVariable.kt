@@ -279,6 +279,8 @@ class NoGradVariable(
 
     override fun neq(value: Float): Tensor = createNew(this.rawValue.neq(value))
 
+    override fun maskedFill(mask: Tensor, value: Float): Tensor = createNew(this.rawValue.maskedFill(mask.getRawValue(), value))
+
     override fun noGrad(): Tensor = this
 
     override fun grad(): Tensor {

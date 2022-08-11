@@ -522,6 +522,10 @@ abstract class AGTensor(
         return NotEqualsConstant(ops)(inplaceSafe(this), value)
     }
 
+    override fun maskedFill(mask: Tensor, value: Float): Tensor {
+        return MaskedFill(ops)(inplaceSafe(this), mask, value)
+    }
+
     internal abstract fun backwardWithGrad(gradient: AbstractRawTensor<Any>)
 
     override fun noGrad(): Tensor {

@@ -71,7 +71,8 @@ class OCLMemoryObject {
 
     private var refCount = 1
 
-    private var lastAccess = System.nanoTime()
+    var lastAccess = System.nanoTime()
+        get private set
 
 
     constructor(array: FloatArray, environment: OCLEnvironment, synchronization: SynchronizationLevel = OFF_DEVICE) {
@@ -158,11 +159,16 @@ class OCLMemoryObject {
                 }
             }
         }
+        jvmArrayBacking = null
         released = true
         environment.removeInactiveMemObject(this)
     }
 
     fun getMemoryObject(option: MemoryAccessOption): cl_mem {
+        if (reusable || released) {
+            throw IllegalStateException("Reusable memory object access violation")
+        }
+
         lastAccess = System.nanoTime()
         if (option == TARGET) {
             synchronization = ON_DEVICE
@@ -218,7 +224,10 @@ class OCLMemoryObject {
             null
         )
 
-        synchronization = BOTH
+        jvmArrayBacking = null
+        pointerBacking = null
+
+        synchronization = ON_DEVICE
     }
 
 

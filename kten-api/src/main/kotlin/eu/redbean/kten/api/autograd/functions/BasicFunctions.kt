@@ -59,9 +59,13 @@ class Div(
         val bRec = b.reciprocal()
         val aGrad = gradient * bRec
         val bGrad = -gradient
-        bGrad *= a
-        bGrad *= bRec
-        bGrad *= bRec
+        if (a.shape == b.shape) {
+            bGrad *= a
+            bGrad *= bRec
+            bGrad *= bRec
+        } else {
+            bGrad *= a * bRec * bRec
+        }
         ops.release(bRec)
         return listOf(
             mayUnexpand(aGrad, aShape, ops),

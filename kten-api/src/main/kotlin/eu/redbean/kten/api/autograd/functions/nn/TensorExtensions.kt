@@ -248,3 +248,8 @@ fun Tensor.upsample2d(upsampleType: UpsampleType, scale: Int): Tensor {
     val function = Upsample2DFunction(upsampleType, scale, this.platformOps())
     return if (requiresGrad) function(this) else function(this).noGrad()
 }
+
+fun Tensor.softmaxCrossEntropy(targets: Tensor): Tensor {
+    val function = SoftmaxCrossEntropy(this.platformOps())
+    return if (requiresGrad) function(this, targets) else function(this, targets).noGrad()
+}

@@ -1014,3 +1014,24 @@ class OCLUpsampleNearestUpdateGrad(descriptor: OCLKernelDescriptor): AbstractOCL
     }
 
 }
+
+@KernelName("masked_fill", "maskedFill")
+class OCLMaskedFill(descriptor: OCLKernelDescriptor): AbstractOCLKernel(descriptor) {
+
+    operator fun invoke(
+        tensor: OCLMemoryObject,
+        mask: OCLMemoryObject,
+        res: OCLMemoryObject,
+        shape: List<Int>,
+        value: Float
+    ) {
+        runSingleDimKernel(
+            shape.toStoreSize().toLong(),
+            tensor.getMemoryObject(SOURCE),
+            mask.getMemoryObject(SOURCE),
+            res.getMemoryObject(TARGET),
+            value
+        )
+    }
+
+}

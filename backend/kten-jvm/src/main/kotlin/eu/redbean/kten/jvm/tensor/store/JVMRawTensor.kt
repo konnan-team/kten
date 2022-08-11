@@ -125,7 +125,7 @@ class JVMRawTensor(
 
     override fun timesAssign(other: AbstractRawTensor<FloatArray>) = inplaceElementwiseOpOnTensors(other, Float::times)
 
-    override fun times(constant: Float): AbstractRawTensor<FloatArray> =mapElementsCopy { it * constant }
+    override fun times(constant: Float): AbstractRawTensor<FloatArray> = mapElementsCopy { it * constant }
 
     override fun timesAssign(constant: Float) = inplaceMapElements { it * constant }
 
@@ -532,6 +532,11 @@ class JVMRawTensor(
 
     override fun inplaceFill(value: Float) {
         storeReference.fill(value)
+    }
+
+    override fun maskedFill(mask: AbstractRawTensor<FloatArray>, value: Float): AbstractRawTensor<FloatArray> {
+        val shapeCorrectedMask = if (mask.shape != shape) mask.broadcastTo(shape) else mask
+        return elementwiseOpOnCommonShapedTensors(shapeCorrectedMask) { thisVal, maskVal -> if (maskVal == 1f) value else thisVal }
     }
 
     fun getView(vararg index: Int): JVMRawTensorView {

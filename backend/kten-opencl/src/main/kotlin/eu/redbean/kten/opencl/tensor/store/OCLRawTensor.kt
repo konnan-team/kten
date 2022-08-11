@@ -393,6 +393,13 @@ class OCLRawTensor(
         storeReference.fill(value)
     }
 
+    override fun maskedFill(mask: AbstractRawTensor<OCLMemoryObject>, value: Float): AbstractRawTensor<OCLMemoryObject> {
+        val shapeCorrectedMask = if (mask.shape != shape) mask.broadcastTo(shape) else mask
+        val res = environment.memoryObject(storeReference.size)
+        environment.kernelStore.maskedFill(storeReference, shapeCorrectedMask.storeReference, res, shape, value)
+        return OCLRawTensor(shape.toList(), res, environment)
+    }
+
     fun view(vararg shape: Int): OCLRawTensorView {
         return OCLRawTensorView(this.shape.reshape(shape.toList()), OCLStoreView(0 until storeReference.size, storeReference))
     }

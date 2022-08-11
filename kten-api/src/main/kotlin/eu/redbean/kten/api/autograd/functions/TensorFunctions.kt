@@ -383,7 +383,7 @@ class Copy(
     }
 
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
-        return listOf(gradient)
+        return listOf(gradient.copy(shallow = true))
     }
 }
 
@@ -539,7 +539,7 @@ class RetainGrad(
     override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
         savedGradient = gradient.copy()
         ops.incrementRef(savedGradient!!)
-        return listOf(gradient)
+        return listOf(gradient.copy(shallow = true))
     }
 
     override fun release() {
@@ -552,6 +552,33 @@ class RetainGrad(
         super.incrementRef()
         if (savedGradient != null)
             ops.incrementRef(savedGradient!!)
+    }
+
+}
+
+class MaskedFill(
+    ops: TensorOperations<AbstractRawTensor<Any>>
+) : UnaryTensorFunction(ops) {
+
+    private lateinit var mask: AbstractRawTensor<Any>
+    private var value: Float = 0f
+
+    operator fun invoke(tensor: Tensor, mask: Tensor, value: Float): MaskedFill {
+        super.invoke(tensor)
+        if (mask.requiresGrad) {
+            throw IllegalArgumentException("Masked fill only accepts mask that doesn't require gradients")
+        }
+        this.mask = mask.getRawValue()
+        this.value = value
+        return this
+    }
+
+    override fun doForward(input: AbstractRawTensor<Any>) {
+        output = input.maskedFill(mask, value)
+    }
+
+    override fun doBackward(gradient: AbstractRawTensor<Any>): List<AbstractRawTensor<Any>?> {
+        return listOf(gradient.maskedFill(mask, 0f))
     }
 
 }

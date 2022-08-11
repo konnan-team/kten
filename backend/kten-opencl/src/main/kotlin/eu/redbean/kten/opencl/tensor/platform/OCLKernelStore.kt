@@ -46,6 +46,7 @@ class OCLKernelStore(
     val indexAdd: OCLIndexAdd by kernels
     val upsampleNearestUpdateOutput: OCLUpsampleNearestUpdateOutput by kernels
     val upsampleNearestUpdateGrad: OCLUpsampleNearestUpdateGrad by kernels
+    val maskedFill: OCLMaskedFill by kernels
 
     init {
         val source = this.javaClass.getResource("/kernels.cl").readText()
@@ -89,6 +90,7 @@ class OCLKernelStore(
         kernels += create(::OCLIndexAdd)
         kernels += create(::OCLUpsampleNearestUpdateOutput)
         kernels += create(::OCLUpsampleNearestUpdateGrad)
+        kernels += create(::OCLMaskedFill)
     }
 
     private inline fun <reified T: AbstractOCLKernel> create(kernel: (OCLKernelDescriptor) -> T): Pair<String, T> {
